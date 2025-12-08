@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <stdio.h>
 #include <time.h>
+#include <openssl/sha.h>
 
 extern ServerData server_data;
 extern sqlite3 *db;
@@ -19,10 +20,23 @@ void generate_session_token(char *token, size_t len)
   token[len - 1] = '\0';
 }
 
+//hash password
+void hash_password(const char *password, char *hashed_output) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256((unsigned char *)password, strlen(password), hash);
+    
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        sprintf(hashed_output + (i * 2), "%02x", hash[i]);
+    }
+    hashed_output[64] = '\0';
+}
+
 void register_user(int socket_fd, char *username, char *password)
 {
   char response[200];
+  char hashed_password[65];
 
+  hash_password(password, hashed_password);
   if (!username || !password)
   {
     snprintf(response, sizeof(response), "REGISTER_FAIL|Missing username or password\n");
@@ -35,7 +49,7 @@ void register_user(int socket_fd, char *username, char *password)
 
   snprintf(query, sizeof(query),
            "INSERT INTO users (username, password) VALUES ('%s', '%s');",
-           username, password);
+           username, hashed_password);
 
   pthread_mutex_lock(&server_data.lock);
 
@@ -69,9 +83,11 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
   char query[300];
   sqlite3_stmt *stmt;
   char response[300];
+  char hashed_password[65];
+  hash_password(password, hashed_password);
 
   snprintf(query, sizeof(query),
-           "SELECT id FROM users WHERE username='%s' AND password='%s';", username, password);
+           "SELECT id FROM users WHERE username='%s' AND password='%s';", username, hashed_password);
 
   pthread_mutex_lock(&server_data.lock);
 

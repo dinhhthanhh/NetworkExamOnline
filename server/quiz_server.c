@@ -29,7 +29,7 @@ int main()
 
     // Initialize DB and load questions
     init_database();
-    load_sample_questions();
+    // load_sample_questions();
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0)

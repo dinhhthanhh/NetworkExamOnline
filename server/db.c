@@ -28,17 +28,6 @@ void init_database() {
                       "completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                       "FOREIGN KEY(user_id) REFERENCES users(id));";
 
-  const char *sql_questions = "CREATE TABLE IF NOT EXISTS questions("
-                        "id INTEGER PRIMARY KEY,"
-                        "question_text TEXT,"
-                        "option_a TEXT,"
-                        "option_b TEXT,"
-                        "option_c TEXT,"
-                        "option_d TEXT,"
-                        "correct_answer INTEGER,"
-                        "difficulty TEXT,"
-                        "category TEXT);";
-
   const char *sql_activity_log = "CREATE TABLE IF NOT EXISTS activity_log("
                            "id INTEGER PRIMARY KEY,"
                            "user_id INTEGER,"
@@ -47,10 +36,36 @@ void init_database() {
                            "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,"
                            "FOREIGN KEY(user_id) REFERENCES users(id));";
 
+  const char *sql_questions = 
+                            "CREATE TABLE IF NOT EXISTS questions("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "room_id INTEGER NOT NULL,"
+                            "question_text TEXT NOT NULL,"
+                            "option_a TEXT NOT NULL,"
+                            "option_b TEXT NOT NULL,"
+                            "option_c TEXT NOT NULL,"
+                            "option_d TEXT NOT NULL,"
+                            "correct_answer INTEGER NOT NULL,"  // 0=A, 1=B, 2=C, 3=D
+                            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                            "FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE CASCADE"
+                            ");";
+  const char *sql_rooms = 
+                            "CREATE TABLE IF NOT EXISTS rooms("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "name TEXT NOT NULL,"
+                            "host_id INTEGER NOT NULL,"
+                            "duration INTEGER DEFAULT 30,"  // Thời gian thi (phút)
+                            "is_active INTEGER DEFAULT 1,"  // 1: đang mở, 0: đã đóng
+                            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                            "FOREIGN KEY(host_id) REFERENCES users(id) ON DELETE CASCADE"
+                            ");";
+
   sqlite3_exec(db, sql_users, 0, 0, &err_msg);
   sqlite3_exec(db, sql_results, 0, 0, &err_msg);
-  sqlite3_exec(db, sql_questions, 0, 0, &err_msg);
   sqlite3_exec(db, sql_activity_log, 0, 0, &err_msg);
+  sqlite3_exec(db, sql_questions, 0, 0, &err_msg);
+  sqlite3_exec(db, sql_rooms, 0, 0, &err_msg);
+
 
   printf("Database initialized successfully\n");
 }

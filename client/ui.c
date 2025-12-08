@@ -45,6 +45,20 @@ gboolean update_timer(gpointer data)
     return FALSE;
 }
 
+static void on_room_selected(GtkListBox *listbox, GtkListBoxRow *row, gpointer user_data) {
+    if (row == NULL) return;
+
+    // Lấy ID từ data gắn vào row
+    const char *id_str = g_object_get_data(G_OBJECT(row), "room_id");
+    if (id_str) {
+        selected_room_id = atoi(id_str);
+        char status_text[128];
+        snprintf(status_text, sizeof(status_text),
+                 "<span foreground='#27ae60' weight='bold'>✅ Selected Room: %d</span>", selected_room_id);
+        gtk_label_set_markup(GTK_LABEL(selected_room_label), status_text);
+    }
+}
+
 void show_view(GtkWidget *view)
 {
     if (current_view)
@@ -59,7 +73,7 @@ void style_button(GtkWidget *btn, const char *color)
     GtkCssProvider *provider = gtk_css_provider_new();
     char css[256];
     snprintf(css, sizeof(css),
-             "button { background-color: %s; color: white; padding: 10px; font-weight: bold; border-radius: 5px; }",
+             "button { background-color: %s; color: black; padding: 10px; font-weight: bold; border-radius: 5px; }",
              color);
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
     gtk_style_context_add_provider(gtk_widget_get_style_context(btn),
@@ -452,6 +466,7 @@ void create_test_mode_screen()
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 300);
+
     rooms_list = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(rooms_list), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(rooms_list), GTK_WRAP_WORD);

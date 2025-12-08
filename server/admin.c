@@ -82,7 +82,7 @@ void manage_questions(int socket_fd, int admin_id)
   for (int i = 0; i < server_data.question_count && i < 100; i++)
   {
     Question *q = &server_data.questions[i];
-    char q_info[300];
+    char q_info[1024];
     snprintf(q_info, sizeof(q_info), "ID:%d|Q:%s|Diff:%s|Cat:%s|",
              q->id, q->text, q->difficulty, q->category);
     strcat(response, q_info);

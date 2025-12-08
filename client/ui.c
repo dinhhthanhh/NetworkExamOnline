@@ -277,6 +277,18 @@ void create_main_menu()
 
     show_view(vbox);
 }
+// Callback for room button click
+void on_room_button_clicked(GtkWidget *widget, gpointer data)
+{
+    int room_id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "room_id"));
+    const gchar *room_name = gtk_button_get_label(GTK_BUTTON(widget));
+
+    selected_room_id = room_id;
+
+    char markup[256];
+    snprintf(markup, sizeof(markup), "<span foreground='#27ae60' weight='bold'>Selected Room: %d (%s)</span>", room_id, room_name);
+    gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
+}
 
 void on_create_room_clicked(GtkWidget *widget, gpointer data)
 {
@@ -333,7 +345,7 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
                 GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                                   "✅ Room created!");
+                                                                   "Room created!");
                 gtk_dialog_run(GTK_DIALOG(success_dialog));
                 gtk_widget_destroy(success_dialog);
                 create_test_mode_screen();
@@ -343,6 +355,7 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
     gtk_widget_destroy(GTK_WIDGET(dialog));
 }
 
+// Original on_join_room_clicked remains unchanged
 void on_join_room_clicked(GtkWidget *widget, gpointer data)
 {
     if (selected_room_id < 0)
@@ -350,7 +363,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-                                                   "⚠️ Select a room first!");
+                                                   "Select a room first!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         return;
@@ -368,7 +381,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                   "✅ Joined!");
+                                                   "Joined!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
@@ -377,7 +390,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                   "❌ Failed to join!");
+                                                   "Failed to join!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
@@ -415,7 +428,7 @@ gboolean on_rooms_text_clicked(GtkWidget *widget, GdkEventButton *event, gpointe
                 selected_room_id = room_id;
                 char status_text[128];
                 snprintf(status_text, sizeof(status_text),
-                         "<span foreground='#27ae60' weight='bold'>✅ Selected Room: %d</span>", room_id);
+                         "<span foreground='#27ae60' weight='bold'>Selected Room: %d</span>", room_id);
                 gtk_label_set_markup(GTK_LABEL(selected_room_label), status_text);
             }
         }
@@ -433,21 +446,21 @@ void create_test_mode_screen()
     gtk_widget_set_margin_bottom(vbox, 20);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>📝 TEST MODE</span>");
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>TEST MODE</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
     GtkWidget *info_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(info_label), "<span foreground='#34495e'>💡 Click on a room to select, then join it!</span>");
+    gtk_label_set_markup(GTK_LABEL(info_label), "<span foreground='#34495e'>Click on a room to select, then join it!</span>");
     gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 0);
 
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *create_btn = gtk_button_new_with_label("➕ CREATE ROOM");
-    GtkWidget *join_btn = gtk_button_new_with_label("🚪 JOIN ROOM");
-    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *create_btn = gtk_button_new_with_label("CREATE ROOM");
+    GtkWidget *join_btn = gtk_button_new_with_label("JOIN ROOM");
+    GtkWidget *refresh_btn = gtk_button_new_with_label("REFRESH");
+    GtkWidget *back_btn = gtk_button_new_with_label("⬅BACK");
 
     style_button(create_btn, "#27ae60");
     style_button(join_btn, "#3498db");
@@ -461,31 +474,81 @@ void create_test_mode_screen()
     gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
 
     selected_room_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(selected_room_label), "<span foreground='#e74c3c'>❌ No room selected</span>");
+    gtk_label_set_markup(GTK_LABEL(selected_room_label), "<span foreground='#e74c3c'>No room selected</span>");
     gtk_box_pack_start(GTK_BOX(vbox), selected_room_label, FALSE, FALSE, 0);
+
+    // Reset selected room ID on screen creation/refresh
+    selected_room_id = -1;
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 300);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);  // Không scroll ngang, scroll dọc nếu dài
 
-    rooms_list = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(rooms_list), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(rooms_list), GTK_WRAP_WORD);
-    gtk_container_add(GTK_CONTAINER(scroll), rooms_list);
+    // Use flowbox to hold room buttons, set to wrap every 3 rooms for grid-like layout (dynamic, not fixed grid)
+    GtkWidget *rooms_flowbox = gtk_flow_box_new();
+    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(rooms_flowbox), TRUE);  // Buttons đều size
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(rooms_flowbox), GTK_SELECTION_NONE);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(rooms_flowbox), 3);  // 3 buttons per row, wrap xuống hàng mới khi đầy
+    gtk_container_add(GTK_CONTAINER(scroll), rooms_flowbox);
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
 
-    g_signal_connect(rooms_list, "button-press-event", G_CALLBACK(on_rooms_text_clicked), NULL);
-
+    // Send and receive LIST_ROOMS
     send_message("LIST_ROOMS\n");
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
-    GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(rooms_list));
-    if (n > 0 && buffer[0] != '\0')
-    {
-        gtk_text_buffer_set_text(text_buffer, buffer, -1);
+
+    int has_rooms = 0;
+
+    if (n > 0 && buffer[0] != '\0') {
+        // Robust parsing using strstr to handle both space-separated and newline-separated responses
+        char *ptr = strstr(buffer, "ROOM|");
+        while (ptr != NULL) {
+            char line[BUFFER_SIZE];
+            char *end = strstr(ptr + 5, "ROOM|");  // +5 to skip "ROOM|"
+            if (end != NULL) {
+                strncpy(line, ptr, end - ptr);
+                line[end - ptr] = '\0';
+            } else {
+                strcpy(line, ptr);
+            }
+
+            // Parse the line
+            char *token = strtok(line, "|");
+            if (token != NULL && strcmp(token, "ROOM") == 0) {
+                token = strtok(NULL, "|");  // id
+                if (token == NULL) {
+                    ptr = end;
+                    continue;
+                }
+                int room_id = atoi(token);
+
+                token = strtok(NULL, "|");  // name
+                if (token == NULL) {
+                    ptr = end;
+                    continue;
+                }
+                char room_name[256];
+                strncpy(room_name, token, sizeof(room_name) - 1);
+                room_name[sizeof(room_name) - 1] = '\0';
+
+                // Create button with name as label, attach id as data
+                GtkWidget *room_btn = gtk_button_new_with_label(room_name);
+                style_button(room_btn, "#ecf0f1"); // Optional: custom style for room buttons
+                gtk_widget_set_size_request(room_btn, 200, 50); // Fixed width and height for each room button
+                g_object_set_data(G_OBJECT(room_btn), "room_id", GINT_TO_POINTER(room_id));
+                g_signal_connect(room_btn, "clicked", G_CALLBACK(on_room_button_clicked), NULL);
+                gtk_flow_box_insert(GTK_FLOW_BOX(rooms_flowbox), room_btn, -1);  // Thêm vào flow, tự fill hàng còn thiếu rồi wrap
+
+                has_rooms = 1;
+            }
+
+            ptr = end;
+        }
     }
-    else
-    {
-        gtk_text_buffer_set_text(text_buffer, "No rooms. Create one!", -1);
+
+    if (!has_rooms) {
+        GtkWidget *no_rooms_label = gtk_label_new("No rooms. Create one!");
+        gtk_flow_box_insert(GTK_FLOW_BOX(rooms_flowbox), no_rooms_label, -1);
     }
 
     g_signal_connect(create_btn, "clicked", G_CALLBACK(on_create_room_clicked), NULL);
@@ -504,7 +567,7 @@ void create_practice_screen()
     gtk_widget_set_margin_end(vbox, 20);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 PRACTICE MODE</span>");
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>PRACTICE MODE</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);

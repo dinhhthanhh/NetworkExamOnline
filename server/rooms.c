@@ -182,7 +182,6 @@ void list_test_rooms(int socket_fd) {
   send(socket_fd, response, offset, 0);
   pthread_mutex_unlock(&server_data.lock);
 }
-
 void join_test_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_lock(&server_data.lock);
 

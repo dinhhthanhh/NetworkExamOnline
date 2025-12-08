@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <gdk/gdk.h>
 #include <glib.h>
+#include <cairo.h>
 
 ClientData client;
 GtkWidget *main_window;
@@ -15,6 +16,7 @@ GtkWidget *rooms_list;
 GtkWidget *status_label;
 GtkWidget *selected_room_label;
 GtkTextBuffer *g_practice_buffer = NULL;
+GtkWidget *room_list; 
 
 int time_remaining = 0;
 int test_active = 0;
@@ -25,6 +27,441 @@ typedef struct
     GtkWidget *user_entry;
     GtkWidget *pass_entry;
 } LoginEntries;
+
+typedef struct {
+    int total_tests;
+    double avg_score;
+    int max_score;
+    int total_score;
+} StatsData;
+static StatsData stats = {0};
+
+// Thêm struct để lưu trữ dữ liệu leaderboard
+typedef struct {
+    char rank[10];
+    char username[50];
+    int score;
+    int tests;
+} LeaderboardEntry;
+
+// Hàm parse dữ liệu leaderboard từ server
+GArray* parse_leaderboard_data(const char *buffer) {
+    GArray *array = g_array_new(FALSE, FALSE, sizeof(LeaderboardEntry));
+    
+    if (strncmp(buffer, "LEADERBOARD|", 12) != 0) {
+        return array;
+    }
+    
+    char *copy = g_strdup(buffer);
+    char *token = strtok(copy, "|");
+    
+    // Bỏ qua phần "LEADERBOARD"
+    token = strtok(NULL, "|");
+    
+    while (token != NULL) {
+        LeaderboardEntry entry;
+        
+        // Lấy rank
+        if (token[0] == '#') {
+            strncpy(entry.rank, token, sizeof(entry.rank) - 1);
+            entry.rank[sizeof(entry.rank) - 1] = '\0';
+        } else {
+            break;
+        }
+        
+        // Lấy username
+        token = strtok(NULL, "|");
+        if (!token) break;
+        strncpy(entry.username, token, sizeof(entry.username) - 1);
+        entry.username[sizeof(entry.username) - 1] = '\0';
+        
+        // Lấy score (Score:XXX)
+        token = strtok(NULL, "|");
+        if (!token) break;
+        if (strncmp(token, "Score:", 6) == 0) {
+            entry.score = atoi(token + 6);
+        } else {
+            entry.score = 0;
+        }
+        
+        // Lấy tests (Tests:XXX)
+        token = strtok(NULL, "|");
+        if (!token) break;
+        if (strncmp(token, "Tests:", 6) == 0) {
+            entry.tests = atoi(token + 6);
+        } else {
+            entry.tests = 0;
+        }
+        
+        g_array_append_val(array, entry);
+        
+        // Tiếp tục với người tiếp theo
+        token = strtok(NULL, "|");
+    }
+    
+    g_free(copy);
+    return array;
+}
+
+// Hàm tạo CSS cho leaderboard
+void setup_leaderboard_css() {
+    static gboolean css_loaded = FALSE;
+    if (css_loaded) return;
+    
+    GtkCssProvider *provider = gtk_css_provider_new();
+    const gchar *css = 
+        ".leaderboard-header {"
+        "  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"
+        "  color: white;"
+        "  font-weight: bold;"
+        "  padding: 12px;"
+        "  border-radius: 8px 8px 0 0;"
+        "  font-size: 14px;"
+        "}"
+        ".leaderboard-row {"
+        "  padding: 10px 12px;"
+        "  border-bottom: 1px solid #e0e0e0;"
+        "}"
+        ".leaderboard-row:hover {"
+        "  background-color: #f5f5f5;"
+        "}"
+        ".rank-1 {"
+        "  background: linear-gradient(135deg, #FFD700 0%, #FFC400 100%);"
+        "  color: #000;"
+        "  font-weight: bold;"
+        "}"
+        ".rank-2 {"
+        "  background: linear-gradient(135deg, #C0C0C0 0%, #A8A8A8 100%);"
+        "  color: #000;"
+        "  font-weight: bold;"
+        "}"
+        ".rank-3 {"
+        "  background: linear-gradient(135deg, #CD7F32 0%, #B87333 100%);"
+        "  color: #000;"
+        "  font-weight: bold;"
+        "}"
+        ".score-cell {"
+        "  color: #27ae60;"
+        "  font-weight: bold;"
+        "}"
+        ".tests-cell {"
+        "  color: #3498db;"
+        "}"
+        ".username-cell {"
+        "  color: #2c3e50;"
+        "  font-weight: 500;"
+        "}";
+    
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+                                             GTK_STYLE_PROVIDER(provider),
+                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+    css_loaded = TRUE;
+}
+
+// Hàm parse dữ liệu từ server
+void parse_stats_data(const char *buffer) {
+    stats.total_tests = 0;
+    stats.avg_score = 0.0;
+    stats.max_score = 0;
+    stats.total_score = 0;
+    
+    // Tìm từng field trong buffer
+    const char *ptr = buffer;
+    
+    // Tìm Tests
+    ptr = strstr(buffer, "Tests:");
+    if (ptr) {
+        stats.total_tests = atoi(ptr + 6);
+    }
+    
+    // Tìm AvgScore
+    ptr = strstr(buffer, "AvgScore:");
+    if (ptr) {
+        stats.avg_score = atof(ptr + 9);
+    }
+    
+    // Tìm MaxScore
+    ptr = strstr(buffer, "MaxScore:");
+    if (ptr) {
+        stats.max_score = atoi(ptr + 9);
+    }
+    
+    // Tìm TotalScore
+    ptr = strstr(buffer, "TotalScore:");
+    if (ptr) {
+        stats.total_score = atoi(ptr + 11);
+    }
+}
+
+// Hàm vẽ đồ thị
+static gboolean on_draw_chart(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    int width = gtk_widget_get_allocated_width(widget);
+    int height = gtk_widget_get_allocated_height(widget);
+    
+    // Background
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_paint(cr);
+    
+    if (stats.total_tests == 0) {
+        // Hiển thị thông báo khi chưa có dữ liệu
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 16);
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+        cairo_move_to(cr, width/2 - 100, height/2);
+        cairo_show_text(cr, "📈 No statistics yet. Start testing!");
+        return FALSE;
+    }
+    
+    // Vẽ biểu đồ tròn cho Average Score
+    int center_x = width / 3;
+    int center_y = height / 2;
+    int radius = (height < width/2) ? height/3 : width/6;
+    
+    double score_angle = (stats.avg_score * 2 * G_PI) / 100.0;
+    
+    // Vẽ phần background (màu xám nhạt)
+    cairo_set_source_rgb(cr, 0.9, 0.9, 0.9);
+    cairo_arc(cr, center_x, center_y, radius, 0, 2 * G_PI);
+    cairo_fill(cr);
+    
+    // Vẽ phần điểm số (màu gradient từ đỏ -> vàng -> xanh)
+    double r, g, b;
+    if (stats.avg_score < 50) {
+        // Đỏ đến vàng
+        r = 0.91;
+        g = 0.3 + (stats.avg_score / 50.0) * 0.6;
+        b = 0.24;
+    } else {
+        // Vàng đến xanh lá
+        r = 0.91 - ((stats.avg_score - 50) / 50.0) * 0.73;
+        g = 0.9 - ((stats.avg_score - 50) / 50.0) * 0.1;
+        b = 0.24 + ((stats.avg_score - 50) / 50.0) * 0.2;
+    }
+    
+    cairo_set_source_rgb(cr, r, g, b);
+    cairo_move_to(cr, center_x, center_y);
+    cairo_arc(cr, center_x, center_y, radius, -G_PI/2, -G_PI/2 + score_angle);
+    cairo_line_to(cr, center_x, center_y);
+    cairo_fill(cr);
+    
+    // Vẽ viền trắng cho biểu đồ
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_set_line_width(cr, 3);
+    cairo_arc(cr, center_x, center_y, radius, 0, 2 * G_PI);
+    cairo_stroke(cr);
+    
+    // Vẽ text phần trăm ở giữa
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, 24);
+    cairo_set_source_rgb(cr, 0.17, 0.24, 0.31);
+    
+    char percent_text[20];
+    snprintf(percent_text, sizeof(percent_text), "%.1f%%", stats.avg_score);
+    cairo_text_extents_t extents;
+    cairo_text_extents(cr, percent_text, &extents);
+    cairo_move_to(cr, center_x - extents.width/2, center_y + extents.height/2);
+    cairo_show_text(cr, percent_text);
+    
+    // Vẽ thông tin chi tiết bên phải
+    int info_x = width * 2 / 3;
+    int info_y = height / 5;
+    int spacing = 50;
+    
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, 16);
+    cairo_set_source_rgb(cr, 0.17, 0.24, 0.31);
+    
+    // Total Tests
+    cairo_move_to(cr, info_x, info_y);
+    char tests_text[100];
+    snprintf(tests_text, sizeof(tests_text), "📝 Total Tests: %d", stats.total_tests);
+    cairo_show_text(cr, tests_text);
+    
+    // Average Score
+    info_y += spacing;
+    cairo_move_to(cr, info_x, info_y);
+    char avg_text[100];
+    snprintf(avg_text, sizeof(avg_text), "📊 Average Score: %.2f%%", stats.avg_score);
+    cairo_show_text(cr, avg_text);
+    
+    // Max Score
+    info_y += spacing;
+    cairo_move_to(cr, info_x, info_y);
+    char max_text[100];
+    snprintf(max_text, sizeof(max_text), "🏆 Best Score: %d", stats.max_score);
+    cairo_show_text(cr, max_text);
+    
+    // Total Score
+    info_y += spacing;
+    cairo_move_to(cr, info_x, info_y);
+    char total_text[100];
+    snprintf(total_text, sizeof(total_text), "⭐ Total Score: %d", stats.total_score);
+    cairo_show_text(cr, total_text);
+    
+    // Vẽ progress bar cho average score
+    info_y += spacing * 1.2;
+    int bar_width = 250;
+    int bar_height = 30;
+    
+    // Label
+    cairo_set_font_size(cr, 14);
+    cairo_move_to(cr, info_x, info_y - 10);
+    cairo_show_text(cr, "Performance:");
+    
+    // Background bar
+    cairo_set_source_rgb(cr, 0.9, 0.9, 0.9);
+    cairo_rectangle(cr, info_x, info_y, bar_width, bar_height);
+    cairo_fill(cr);
+    
+    // Progress bar (màu gradient tùy theo điểm)
+    cairo_set_source_rgb(cr, r, g, b);
+    cairo_rectangle(cr, info_x, info_y, bar_width * (stats.avg_score / 100.0), bar_height);
+    cairo_fill(cr);
+    
+    // Bar border
+    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+    cairo_set_line_width(cr, 2);
+    cairo_rectangle(cr, info_x, info_y, bar_width, bar_height);
+    cairo_stroke(cr);
+    
+    // Text trong bar
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_set_font_size(cr, 12);
+    char bar_text[20];
+    snprintf(bar_text, sizeof(bar_text), "%.1f%%", stats.avg_score);
+    cairo_text_extents(cr, bar_text, &extents);
+    cairo_move_to(cr, info_x + (bar_width * stats.avg_score / 100.0) - extents.width - 5, 
+                  info_y + bar_height/2 + extents.height/2);
+    cairo_show_text(cr, bar_text);
+    
+    return FALSE;
+}
+
+// Callback khi click vào button của phòng
+void on_room_button_clicked(GtkWidget *button, gpointer data)
+{
+    const char *room_id_str = g_object_get_data(G_OBJECT(button), "room_id");
+    const char *room_name = gtk_button_get_label(GTK_BUTTON(button));
+    
+    if (room_id_str)
+    {
+        selected_room_id = atoi(room_id_str);
+        
+        // Cập nhật label hiển thị phòng đã chọn
+        char markup[256];
+        snprintf(markup, sizeof(markup), 
+                 "<span foreground='#27ae60' weight='bold'>✅ Selected: %s (ID: %d)</span>", 
+                 room_name, selected_room_id);
+        gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
+    }
+}
+
+void load_rooms_list()
+{
+    // Reset selected room
+    selected_room_id = -1;
+    gtk_label_set_markup(GTK_LABEL(selected_room_label), 
+                        "<span foreground='#e74c3c'>❌ No room selected</span>");
+    
+    // Xóa hết các row cũ
+    GList *children, *iter;
+    children = gtk_container_get_children(GTK_CONTAINER(rooms_list));
+    for (iter = children; iter != NULL; iter = g_list_next(iter))
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    g_list_free(children);
+
+    // Gửi yêu cầu lấy danh sách phòng
+    send_message("LIST_ROOMS\n");
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+
+    if (n > 0 && buffer[0] != '\0')
+    {
+        char *line = strtok(buffer, "\n");
+        int room_count = 0;
+        
+        while (line != NULL)
+        {
+            if (strncmp(line, "ROOM|", 5) == 0)
+            {
+                // Parse: ROOM|id|name|time|status|question_status|owner
+                char room_id[16], room_name[64], owner[32], status[32];
+                int time_limit;
+                
+                sscanf(line, "ROOM|%15[^|]|%63[^|]|%d|%31[^|]|%*[^|]|%31s",
+                       room_id, room_name, &time_limit, status, owner);
+
+                // Tạo button với thông tin phòng
+                char button_label[128];
+                snprintf(button_label, sizeof(button_label), 
+                        "🏠 %s | ⏱️ %dmin | 👤 %s", 
+                        room_name, time_limit, owner);
+                
+                GtkWidget *btn = gtk_button_new_with_label(button_label);
+                
+                // Lưu room_id vào button
+                g_object_set_data_full(G_OBJECT(btn), "room_id", 
+                                      g_strdup(room_id), g_free);
+                
+                // Style cho button
+                GtkCssProvider *provider = gtk_css_provider_new();
+                char css[512];
+                snprintf(css, sizeof(css),
+                        "button { "
+                        "  background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%);"
+                        "  color: white;"
+                        "  padding: 15px;"
+                        "  font-weight: bold;"
+                        "  border-radius: 8px;"
+                        "  border: none;"
+                        "  margin: 5px;"
+                        "}"
+                        "button:hover {"
+                        "  background: linear-gradient(135deg, #764ba2 0%%, #667eea 100%%);"
+                        "}");
+                gtk_css_provider_load_from_data(provider, css, -1, NULL);
+                gtk_style_context_add_provider(gtk_widget_get_style_context(btn),
+                                             GTK_STYLE_PROVIDER(provider),
+                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+                
+                // Kết nối signal
+                g_signal_connect(btn, "clicked", 
+                               G_CALLBACK(on_room_button_clicked), NULL);
+
+                // Thêm vào list
+                GtkWidget *row = gtk_list_box_row_new();
+                gtk_container_add(GTK_CONTAINER(row), btn);
+                gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
+                
+                room_count++;
+            }
+            line = strtok(NULL, "\n");
+        }
+        
+        if (room_count == 0)
+        {
+            GtkWidget *label = gtk_label_new(NULL);
+            gtk_label_set_markup(GTK_LABEL(label), 
+                               "<span foreground='#95a5a6' size='large'>📭 No rooms available. Create one!</span>");
+            GtkWidget *row = gtk_list_box_row_new();
+            gtk_container_add(GTK_CONTAINER(row), label);
+            gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
+        }
+    }
+    else
+    {
+        GtkWidget *label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(label), 
+                           "<span foreground='#e74c3c'>⚠️ Cannot load rooms. Check connection.</span>");
+        GtkWidget *row = gtk_list_box_row_new();
+        gtk_container_add(GTK_CONTAINER(row), label);
+        gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
+    }
+
+    gtk_widget_show_all(GTK_WIDGET(rooms_list));
+}
 
 gboolean update_timer(gpointer data)
 {
@@ -47,20 +484,6 @@ gboolean update_timer(gpointer data)
     return FALSE;
 }
 
-static void on_room_selected(GtkListBox *listbox, GtkListBoxRow *row, gpointer user_data) {
-    if (row == NULL) return;
-
-    // Lấy ID từ data gắn vào row
-    const char *id_str = g_object_get_data(G_OBJECT(row), "room_id");
-    if (id_str) {
-        selected_room_id = atoi(id_str);
-        char status_text[128];
-        snprintf(status_text, sizeof(status_text),
-                 "<span foreground='#27ae60' weight='bold'>✅ Selected Room: %d</span>", selected_room_id);
-        gtk_label_set_markup(GTK_LABEL(selected_room_label), status_text);
-    }
-}
-
 void show_view(GtkWidget *view)
 {
     if (current_view)
@@ -70,17 +493,43 @@ void show_view(GtkWidget *view)
     gtk_widget_show_all(main_window);
 }
 
-void style_button(GtkWidget *btn, const char *color)
+void style_button(GtkWidget *button, const char *hex_color)
 {
+    // Sử dụng style context để đặt background color trực tiếp
+    GtkStyleContext *context = gtk_widget_get_style_context(button);
+    
+    // Tạo CSS provider
     GtkCssProvider *provider = gtk_css_provider_new();
     char css[256];
+    
+    // Tạo class động dựa trên màu
+    char class_name[32];
+    snprintf(class_name, sizeof(class_name), "styled-button-%s", hex_color + 1);
+    
+    // Thêm class vào button
+    gtk_style_context_add_class(context, class_name);
+    
+    // Tạo CSS cho class này
     snprintf(css, sizeof(css),
-             "button { background-color: %s; color: black; padding: 10px; font-weight: bold; border-radius: 5px; }",
-             color);
+             ".%s { "
+             "background: %s; "
+             "color: white; "
+             "font-weight: bold; "
+             "border-radius: 6px; "
+             "padding: 8px 16px; "
+             "}"
+             ".%s:hover { "
+             "background: %s; "
+             "opacity: 0.9; "
+             "}",
+             class_name, hex_color,
+             class_name, hex_color);
+    
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
-    gtk_style_context_add_provider(gtk_widget_get_style_context(btn),
+    gtk_style_context_add_provider(context,
                                    GTK_STYLE_PROVIDER(provider),
-                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+                                   GTK_STYLE_PROVIDER_PRIORITY_USER);
+    g_object_unref(provider);
 }
 
 void on_login_clicked(GtkWidget *widget, gpointer data)
@@ -210,8 +659,11 @@ void create_login_screen()
     GtkWidget *login_btn = gtk_button_new_with_label("🔓 LOGIN");
     GtkWidget *register_btn = gtk_button_new_with_label("✏️ REGISTER");
 
+    gtk_widget_set_name(login_btn, "login_btn");
+    gtk_widget_set_name(register_btn, "register_btn");
     style_button(login_btn, "#3498db");
     style_button(register_btn, "#27ae60");
+    
 
     LoginEntries *entries = g_malloc(sizeof(LoginEntries));
     entries->user_entry = username_entry;
@@ -338,13 +790,16 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
                                                                    "✅ Room created!");
                 gtk_dialog_run(GTK_DIALOG(success_dialog));
                 gtk_widget_destroy(success_dialog);
-                create_test_mode_screen();
+
+                // Cập nhật danh sách phòng
+                load_rooms_list();
             }
         }
     }
     gtk_widget_destroy(GTK_WIDGET(dialog));
 }
 
+// Hàm tham gia phòng - ĐÃ SỬA
 void on_join_room_clicked(GtkWidget *widget, gpointer data)
 {
     if (selected_room_id < 0)
@@ -352,13 +807,14 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-                                                   "⚠️ Select a room first!");
+                                                   "⚠️ Please select a room first!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         return;
     }
 
-    char cmd[100];
+    // Gửi lệnh JOIN_ROOM với room_id đã chọn
+    char cmd[128];
     snprintf(cmd, sizeof(cmd), "JOIN_ROOM|%d\n", selected_room_id);
     send_message(cmd);
 
@@ -370,60 +826,27 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                   "✅ Joined!");
+                                                   "✅ Joined room successfully!\n\nWaiting for test to start...");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
+        
+        // TODO: Chuyển sang màn hình chờ thi hoặc bắt đầu thi
+        // create_waiting_room_screen();
     }
     else
     {
+        char error_msg[BUFFER_SIZE + 50];
+        snprintf(error_msg, sizeof(error_msg), 
+                "❌ Failed to join room!\n\nServer response: %s", 
+                buffer[0] ? buffer : "No response");
+        
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                   "❌ Failed to join!");
+                                                   "%s", error_msg);
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
-}
-
-gboolean on_rooms_text_clicked(GtkWidget *widget, GdkEventButton *event, gpointer data)
-{
-    if (event->type == GDK_BUTTON_PRESS && event->button == 1)
-    {
-        GtkTextView *text_view = GTK_TEXT_VIEW(widget);
-        GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
-
-        int x, y;
-        gtk_text_view_window_to_buffer_coords(text_view, GTK_TEXT_WINDOW_WIDGET,
-                                              event->x, event->y, &x, &y);
-
-        GtkTextIter iter;
-        gtk_text_view_get_iter_at_location(text_view, &iter, x, y);
-
-        GtkTextIter line_start = iter;
-        gtk_text_iter_set_line_offset(&line_start, 0);
-
-        GtkTextIter line_end = iter;
-        gtk_text_iter_forward_to_line_end(&line_end);
-
-        gchar *line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
-
-        if (strlen(line_text) > 0 && line_text[0] != '\0')
-        {
-            int room_id = -1;
-            sscanf(line_text, "%d|", &room_id);
-
-            if (room_id >= 0)
-            {
-                selected_room_id = room_id;
-                char status_text[128];
-                snprintf(status_text, sizeof(status_text),
-                         "<span foreground='#27ae60' weight='bold'>✅ Selected Room: %d</span>", room_id);
-                gtk_label_set_markup(GTK_LABEL(selected_room_label), status_text);
-            }
-        }
-        g_free(line_text);
-    }
-    return FALSE;
 }
 
 void create_test_mode_screen()
@@ -442,9 +865,10 @@ void create_test_mode_screen()
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
     GtkWidget *info_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(info_label), "<span foreground='#34495e'>💡 Click on a room to select, then join it!</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 0);
+    gtk_label_set_markup(GTK_LABEL(info_label), "<span foreground='#34495e' size='large'>💡 Click on a room button to select, then click JOIN ROOM</span>");
+    gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 5);
 
+    // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *create_btn = gtk_button_new_with_label("➕ CREATE ROOM");
     GtkWidget *join_btn = gtk_button_new_with_label("🚪 JOIN ROOM");
@@ -460,146 +884,61 @@ void create_test_mode_screen()
     gtk_box_pack_start(GTK_BOX(button_box), join_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(button_box), refresh_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 5);
 
+    // Label phòng đang chọn
     selected_room_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(selected_room_label), "<span foreground='#e74c3c'>❌ No room selected</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), selected_room_label, FALSE, FALSE, 0);
+    gtk_label_set_markup(GTK_LABEL(selected_room_label), 
+                        "<span foreground='#e74c3c' size='large'>❌ No room selected</span>");
+    gtk_box_pack_start(GTK_BOX(vbox), selected_room_label, FALSE, FALSE, 5);
 
+    GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(vbox), sep2, FALSE, FALSE, 5);
+
+    // ListBox cho danh sách phòng
+    rooms_list = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(rooms_list), GTK_SELECTION_NONE);
+    
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 300);
-
-    rooms_list = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(rooms_list), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(rooms_list), GTK_WRAP_WORD);
-    gtk_container_add(GTK_CONTAINER(scroll), rooms_list);
+    gtk_container_add(GTK_CONTAINER(scroll), GTK_WIDGET(rooms_list));
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 350);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
 
-    g_signal_connect(rooms_list, "button-press-event", G_CALLBACK(on_rooms_text_clicked), NULL);
+    // Load danh sách phòng
+    load_rooms_list();
 
-    send_message("LIST_ROOMS\n");
-    char buffer[BUFFER_SIZE];
-    ssize_t n = receive_message(buffer, sizeof(buffer));
-    GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(rooms_list));
-    if (n > 0 && buffer[0] != '\0')
-    {
-        gtk_text_buffer_set_text(text_buffer, buffer, -1);
-    }
-    else
-    {
-        gtk_text_buffer_set_text(text_buffer, "No rooms. Create one!", -1);
-    }
-
+    // Signal connect
     g_signal_connect(create_btn, "clicked", G_CALLBACK(on_create_room_clicked), NULL);
     g_signal_connect(join_btn, "clicked", G_CALLBACK(on_join_room_clicked), NULL);
-    g_signal_connect(refresh_btn, "clicked", G_CALLBACK(create_test_mode_screen), NULL);
+    g_signal_connect(refresh_btn, "clicked", G_CALLBACK(load_rooms_list), NULL);
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
 
-    show_view(vbox);
-}
-
-void create_practice_screen()
-{
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 15);
-    gtk_widget_set_margin_top(vbox, 20);
-    gtk_widget_set_margin_start(vbox, 20);
-    gtk_widget_set_margin_end(vbox, 20);
-
-    GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title),
-        "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 PRACTICE MODE</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
-
-    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
-
-    GtkWidget *filter_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(filter_label),
-        "<span foreground='#34495e' weight='bold'>Select category and difficulty:</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), filter_label, FALSE, FALSE, 0);
-
-    GtkWidget *filter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-
-    GtkWidget *category_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(category_label), "<span foreground='#34495e'>Category:</span>");
-    GtkWidget *category_combo = gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(category_combo), "", "All");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(category_combo), "math", "Math");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(category_combo), "science", "Science");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(category_combo), "english", "English");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(category_combo), 0);
-    gtk_box_pack_start(GTK_BOX(filter_box), category_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(filter_box), category_combo, TRUE, TRUE, 0);
-
-    GtkWidget *difficulty_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(difficulty_label),
-                         "<span foreground='#34495e'>Difficulty:</span>");
-    GtkWidget *difficulty_combo = gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(difficulty_combo), "", "All");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(difficulty_combo), "easy", "Easy");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(difficulty_combo), "medium", "Medium");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(difficulty_combo), "hard", "Hard");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(difficulty_combo), 0);
-    gtk_box_pack_start(GTK_BOX(filter_box), difficulty_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(filter_box), difficulty_combo, TRUE, TRUE, 0);
-
-    gtk_box_pack_start(GTK_BOX(vbox), filter_box, FALSE, FALSE, 0);
-
-    GtkWidget *questions_scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(questions_scroll), 350);
-    GtkWidget *questions_view = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(questions_view), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(questions_view), GTK_WRAP_WORD);
-    gtk_container_add(GTK_CONTAINER(questions_scroll), questions_view);
-    gtk_box_pack_start(GTK_BOX(vbox), questions_scroll, TRUE, TRUE, 0);
-
-    // Lưu buffer cho thread update
-    g_practice_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(questions_view));
-
-    // Gửi request lấy câu hỏi
-    send_message("GET_PRACTICE_QUESTIONS\n");
-
-    // Tạo thread không block UI
-    // g_thread_new("practice-thread", practice_thread_func, NULL);
-
-    GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
-    style_button(back_btn, "#95a5a6");
-    gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
-
-    g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
     show_view(vbox);
 }
 
 gboolean update_practice_text(gpointer data) {
     char *text = (char *)data;
-
     gtk_text_buffer_set_text(g_practice_buffer, text, -1);
-
-    g_free(text); // giải phóng chuỗi copy từ thread
-
-    return FALSE; // chạy 1 lần
+    g_free(text);
+    return FALSE;
 }
+
 gpointer practice_thread_func(gpointer data) {
     char recv_buf[BUFFER_SIZE];
-
     ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
-
     char *result;
 
     if (n > 0 && recv_buf[0] != '\0') {
-        result = g_strdup(recv_buf); // copy dữ liệu
+        result = g_strdup(recv_buf);
     } else {
         result = g_strdup("📚 No practice questions available.");
     }
 
-    // yêu cầu GTK update UI
     g_idle_add(update_practice_text, result);
-
     return NULL;
 }
-
 
 void create_stats_screen()
 {
@@ -608,34 +947,32 @@ void create_stats_screen()
     gtk_widget_set_margin_start(vbox, 20);
     gtk_widget_set_margin_end(vbox, 20);
 
+    // Title
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>📊 MY STATISTICS</span>");
+    gtk_label_set_markup(GTK_LABEL(title), 
+        "<span foreground='#2c3e50' weight='bold' size='20480'>📊 MY STATISTICS</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
+    // Separator
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
-    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *stats_view = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(stats_view), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(stats_view), GTK_WRAP_WORD);
-    gtk_container_add(GTK_CONTAINER(scroll), stats_view);
-    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
-
+    // Nhận dữ liệu từ server
     send_message("USER_STATS\n");
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
-
-    GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(stats_view));
-    if (n > 0 && buffer[0] != '\0')
-    {
-        gtk_text_buffer_set_text(text_buffer, buffer, -1);
-    }
-    else
-    {
-        gtk_text_buffer_set_text(text_buffer, "📈 No statistics yet. Start testing!", -1);
+    
+    if (n > 0 && buffer[0] != '\0') {
+        parse_stats_data(buffer);
     }
 
+    // Drawing area cho đồ thị
+    GtkWidget *drawing_area = gtk_drawing_area_new();
+    gtk_widget_set_size_request(drawing_area, 600, 400);
+    g_signal_connect(G_OBJECT(drawing_area), "draw", G_CALLBACK(on_draw_chart), NULL);
+    gtk_box_pack_start(GTK_BOX(vbox), drawing_area, TRUE, TRUE, 0);
+
+    // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
     style_button(back_btn, "#95a5a6");
@@ -646,48 +983,238 @@ void create_stats_screen()
     show_view(vbox);
 }
 
-void create_leaderboard_screen()
-{
+void create_leaderboard_screen() {
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_top(vbox, 20);
     gtk_widget_set_margin_start(vbox, 20);
     gtk_widget_set_margin_end(vbox, 20);
+    gtk_widget_set_margin_bottom(vbox, 20);
 
+    // Title với icon
+    GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *trophy_icon = gtk_label_new("🏆");
+    gtk_widget_set_name(trophy_icon, "trophy-icon");
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span forecolor='#2c3e50' weight='bold' size='20480'>🏆 LEADERBOARD - TOP 10</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
+    gtk_label_set_markup(GTK_LABEL(title), 
+        "<span foreground='#2c3e50' weight='bold' size='20480'>LEADERBOARD - TOP PLAYERS</span>");
+    
+    gtk_box_pack_start(GTK_BOX(title_box), trophy_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(title_box), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), title_box, FALSE, FALSE, 5);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 10);
 
+    // Thông tin cập nhật
+    GtkWidget *info_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(info_label), 
+        "<span foreground='#7f8c8d' size='small'>📊 Updated in real-time • Based on total score</span>");
+    gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 5);
+
+    // Main container cho leaderboard
+    GtkWidget *main_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_name(main_container, "leaderboard-container");
+    
+    // Thiết lập CSS
+    setup_leaderboard_css();
+
+    // Header của bảng
+    GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_name(header_box, "leaderboard-header");
+    
+    GtkWidget *rank_header = gtk_label_new("🏅 RANK");
+    GtkWidget *user_header = gtk_label_new("👤 PLAYER");
+    GtkWidget *score_header = gtk_label_new("⭐ SCORE");
+    GtkWidget *tests_header = gtk_label_new("📝 TESTS");
+    
+    gtk_label_set_xalign(GTK_LABEL(rank_header), 0.5);
+    gtk_label_set_xalign(GTK_LABEL(user_header), 0.0);
+    gtk_label_set_xalign(GTK_LABEL(score_header), 0.5);
+    gtk_label_set_xalign(GTK_LABEL(tests_header), 0.5);
+    
+    gtk_widget_set_hexpand(rank_header, TRUE);
+    gtk_widget_set_hexpand(user_header, TRUE);
+    gtk_widget_set_hexpand(score_header, TRUE);
+    gtk_widget_set_hexpand(tests_header, TRUE);
+    
+    gtk_box_pack_start(GTK_BOX(header_box), rank_header, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(header_box), user_header, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(header_box), score_header, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(header_box), tests_header, TRUE, TRUE, 0);
+    
+    gtk_box_pack_start(GTK_BOX(main_container), header_box, FALSE, FALSE, 0);
+
+    // Scroll window cho nội dung
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *board_view = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(board_view), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(board_view), GTK_WRAP_WORD);
-    gtk_container_add(GTK_CONTAINER(scroll), board_view);
-    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 300);
+    
+    GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(scroll), content_box);
 
-    send_message("LEADERBOARD|10\n");
+    // Gửi yêu cầu và nhận dữ liệu từ server
+    send_message("LEADERBOARD\n");
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
 
-    GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(board_view));
-    if (n > 0 && buffer[0] != '\0')
-    {
-        gtk_text_buffer_set_text(text_buffer, buffer, -1);
+    if (n > 0 && buffer[0] != '\0') {
+        // Parse dữ liệu
+        GArray *entries = parse_leaderboard_data(buffer);
+        
+        if (entries->len > 0) {
+            for (guint i = 0; i < entries->len; i++) {
+                LeaderboardEntry entry = g_array_index(entries, LeaderboardEntry, i);
+                
+                // Tạo hàng cho mỗi người chơi
+                GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+                gtk_widget_set_name(row_box, "leaderboard-row");
+                
+                // Thêm class cho top 3
+                int rank_num = atoi(entry.rank + 1); // Bỏ ký tự '#'
+                if (rank_num == 1) {
+                    gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-1");
+                } else if (rank_num == 2) {
+                    gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-2");
+                } else if (rank_num == 3) {
+                    gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-3");
+                }
+                
+                // Rank với icon đặc biệt cho top 3
+                GtkWidget *rank_label;
+                if (rank_num == 1) {
+                    rank_label = gtk_label_new("🥇");
+                } else if (rank_num == 2) {
+                    rank_label = gtk_label_new("🥈");
+                } else if (rank_num == 3) {
+                    rank_label = gtk_label_new("🥉");
+                } else {
+                    rank_label = gtk_label_new(entry.rank);
+                }
+                gtk_label_set_xalign(GTK_LABEL(rank_label), 0.5);
+                gtk_widget_set_hexpand(rank_label, TRUE);
+                
+                // Username
+                GtkWidget *user_label = gtk_label_new(entry.username);
+                gtk_label_set_xalign(GTK_LABEL(user_label), 0.0);
+                gtk_widget_set_hexpand(user_label, TRUE);
+                gtk_style_context_add_class(gtk_widget_get_style_context(user_label), "username-cell");
+                
+                // Score
+                GtkWidget *score_label = gtk_label_new(NULL);
+                char score_text[50];
+                snprintf(score_text, sizeof(score_text), "%d", entry.score);
+                gtk_label_set_text(GTK_LABEL(score_label), score_text);
+                gtk_label_set_xalign(GTK_LABEL(score_label), 0.5);
+                gtk_widget_set_hexpand(score_label, TRUE);
+                gtk_style_context_add_class(gtk_widget_get_style_context(score_label), "score-cell");
+                
+                // Tests
+                GtkWidget *tests_label = gtk_label_new(NULL);
+                char tests_text[50];
+                snprintf(tests_text, sizeof(tests_text), "%d", entry.tests);
+                gtk_label_set_text(GTK_LABEL(tests_label), tests_text);
+                gtk_label_set_xalign(GTK_LABEL(tests_label), 0.5);
+                gtk_widget_set_hexpand(tests_label, TRUE);
+                gtk_style_context_add_class(gtk_widget_get_style_context(tests_label), "tests-cell");
+                
+                // Thêm vào hàng
+                gtk_box_pack_start(GTK_BOX(row_box), rank_label, TRUE, TRUE, 0);
+                gtk_box_pack_start(GTK_BOX(row_box), user_label, TRUE, TRUE, 0);
+                gtk_box_pack_start(GTK_BOX(row_box), score_label, TRUE, TRUE, 0);
+                gtk_box_pack_start(GTK_BOX(row_box), tests_label, TRUE, TRUE, 0);
+                
+                // Thêm vào content box
+                gtk_box_pack_start(GTK_BOX(content_box), row_box, FALSE, FALSE, 0);
+            }
+            
+            g_array_free(entries, TRUE);
+        } else {
+            // Hiển thị thông báo nếu không có dữ liệu
+            GtkWidget *empty_label = gtk_label_new(NULL);
+            gtk_label_set_markup(GTK_LABEL(empty_label), 
+                "<span foreground='#95a5a6' size='large'>📭 No players on leaderboard yet</span>");
+            gtk_box_pack_start(GTK_BOX(content_box), empty_label, FALSE, FALSE, 20);
+        }
+    } else {
+        // Hiển thị lỗi nếu không kết nối được
+        GtkWidget *error_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(error_label), 
+            "<span foreground='#e74c3c' size='large'>⚠️ Cannot load leaderboard. Check connection.</span>");
+        gtk_box_pack_start(GTK_BOX(content_box), error_label, FALSE, FALSE, 20);
     }
-    else
-    {
-        gtk_text_buffer_set_text(text_buffer, "🥇 Leaderboard coming soon!", -1);
-    }
+    
+    gtk_box_pack_start(GTK_BOX(main_container), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), main_container, TRUE, TRUE, 10);
 
+    // Statistics summary (nếu có dữ liệu)
+    GtkWidget *stats_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    gtk_widget_set_margin_top(stats_box, 10);
+    gtk_widget_set_margin_bottom(stats_box, 10);
+    
+    GtkWidget *total_players = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(total_players), 
+        "<span foreground='#27ae60' weight='bold'>👥 Total Players: Loading...</span>");
+    
+    GtkWidget *avg_score = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(avg_score), 
+        "<span foreground='#3498db' weight='bold'>📊 Avg Score: Calculating...</span>");
+    
+    gtk_box_pack_start(GTK_BOX(stats_box), total_players, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(stats_box), avg_score, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), stats_box, FALSE, FALSE, 0);
+
+    // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
     GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
-    style_button(back_btn, "#95a5a6");
+    
+    // Style cho buttons
+    GtkCssProvider *btn_provider = gtk_css_provider_new();
+    const gchar *btn_css = 
+        "#refresh-btn {"
+        "  background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);"
+        "  color: white;"
+        "  padding: 8px 16px;"
+        "  border-radius: 6px;"
+        "  font-weight: bold;"
+        "}"
+        "#refresh-btn:hover {"
+        "  background: linear-gradient(135deg, #2980b9 0%, #3498db 100%);"
+        "}"
+        "#back-btn {"
+        "  background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);"
+        "  color: white;"
+        "  padding: 8px 16px;"
+        "  border-radius: 6px;"
+        "  font-weight: bold;"
+        "}"
+        "#back-btn:hover {"
+        "  background: linear-gradient(135deg, #7f8c8d 0%, #95a5a6 100%);"
+        "}";
+    
+    gtk_css_provider_load_from_data(btn_provider, btn_css, -1, NULL);
+    
+    gtk_widget_set_name(refresh_btn, "refresh-btn");
+    gtk_widget_set_name(back_btn, "back-btn");
+    
+    gtk_style_context_add_provider(gtk_widget_get_style_context(refresh_btn),
+                                  GTK_STYLE_PROVIDER(btn_provider),
+                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    gtk_style_context_add_provider(gtk_widget_get_style_context(back_btn),
+                                  GTK_STYLE_PROVIDER(btn_provider),
+                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    
+    g_object_unref(btn_provider);
+    
+    gtk_box_pack_start(GTK_BOX(button_box), refresh_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 10);
 
+    // Signal connections
+    g_signal_connect(refresh_btn, "clicked", G_CALLBACK(create_leaderboard_screen), NULL);
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
+
     show_view(vbox);
 }
 
@@ -825,6 +1352,43 @@ void create_admin_panel()
     {
         gtk_text_buffer_set_text(text_buffer, "📊 Admin data loading...", -1);
     }
+
+    GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    style_button(back_btn, "#95a5a6");
+    gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
+
+    g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
+    show_view(vbox);
+}
+
+void create_practice_screen()
+{
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(vbox, 20);
+    gtk_widget_set_margin_start(vbox, 20);
+    gtk_widget_set_margin_end(vbox, 20);
+
+    GtkWidget *title = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 PRACTICE MODE</span>");
+    gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
+
+    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
+
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *practice_view = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(practice_view), FALSE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(practice_view), GTK_WRAP_WORD);
+    g_practice_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(practice_view));
+    gtk_container_add(GTK_CONTAINER(scroll), practice_view);
+    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
+
+    gtk_text_buffer_set_text(g_practice_buffer, "⏳ Loading practice questions...", -1);
+
+    send_message("PRACTICE_MODE\n");
+    g_thread_new("practice_thread", practice_thread_func, NULL);
 
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");

@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gdk/gdk.h>
+#include <glib.h>
 
 ClientData client;
 GtkWidget *main_window;
@@ -13,6 +14,7 @@ GtkWidget *timer_label;
 GtkWidget *rooms_list;
 GtkWidget *status_label;
 GtkWidget *selected_room_label;
+GtkTextBuffer *g_practice_buffer = NULL;
 
 int time_remaining = 0;
 int test_active = 0;
@@ -504,14 +506,16 @@ void create_practice_screen()
     gtk_widget_set_margin_end(vbox, 20);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 PRACTICE MODE</span>");
+    gtk_label_set_markup(GTK_LABEL(title),
+        "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 PRACTICE MODE</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
     GtkWidget *filter_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(filter_label), "<span foreground='#34495e' weight='bold'>Select category and difficulty:</span>");
+    gtk_label_set_markup(GTK_LABEL(filter_label),
+        "<span foreground='#34495e' weight='bold'>Select category and difficulty:</span>");
     gtk_box_pack_start(GTK_BOX(vbox), filter_label, FALSE, FALSE, 0);
 
     GtkWidget *filter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -528,7 +532,8 @@ void create_practice_screen()
     gtk_box_pack_start(GTK_BOX(filter_box), category_combo, TRUE, TRUE, 0);
 
     GtkWidget *difficulty_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(difficulty_label), "<span foreground='#34495e'>Difficulty:</span>");
+    gtk_label_set_markup(GTK_LABEL(difficulty_label),
+                         "<span foreground='#34495e'>Difficulty:</span>");
     GtkWidget *difficulty_combo = gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(difficulty_combo), "", "All");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(difficulty_combo), "easy", "Easy");
@@ -548,19 +553,14 @@ void create_practice_screen()
     gtk_container_add(GTK_CONTAINER(questions_scroll), questions_view);
     gtk_box_pack_start(GTK_BOX(vbox), questions_scroll, TRUE, TRUE, 0);
 
-    send_message("GET_PRACTICE_QUESTIONS\n");
-    char buffer[BUFFER_SIZE];
-    ssize_t n = receive_message(buffer, sizeof(buffer));
+    // Lưu buffer cho thread update
+    g_practice_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(questions_view));
 
-    GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(questions_view));
-    if (n > 0 && buffer[0] != '\0')
-    {
-        gtk_text_buffer_set_text(text_buffer, buffer, -1);
-    }
-    else
-    {
-        gtk_text_buffer_set_text(text_buffer, "📚 No practice questions available.", -1);
-    }
+    // Gửi request lấy câu hỏi
+    send_message("GET_PRACTICE_QUESTIONS\n");
+
+    // Tạo thread không block UI
+    // g_thread_new("practice-thread", practice_thread_func, NULL);
 
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
@@ -571,6 +571,35 @@ void create_practice_screen()
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
     show_view(vbox);
 }
+
+gboolean update_practice_text(gpointer data) {
+    char *text = (char *)data;
+
+    gtk_text_buffer_set_text(g_practice_buffer, text, -1);
+
+    g_free(text); // giải phóng chuỗi copy từ thread
+
+    return FALSE; // chạy 1 lần
+}
+gpointer practice_thread_func(gpointer data) {
+    char recv_buf[BUFFER_SIZE];
+
+    ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
+
+    char *result;
+
+    if (n > 0 && recv_buf[0] != '\0') {
+        result = g_strdup(recv_buf); // copy dữ liệu
+    } else {
+        result = g_strdup("📚 No practice questions available.");
+    }
+
+    // yêu cầu GTK update UI
+    g_idle_add(update_practice_text, result);
+
+    return NULL;
+}
+
 
 void create_stats_screen()
 {

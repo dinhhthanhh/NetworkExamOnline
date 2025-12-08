@@ -3,8 +3,18 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "include/client_common.h"
+
+void net_set_timeout(int sockfd) {
+    struct timeval timeout;
+    timeout.tv_sec = 5;   // 5 giây (có thể chỉnh theo ý bạn)
+    timeout.tv_usec = 0;
+
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+}
 
 extern ClientData client;
 

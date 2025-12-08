@@ -73,12 +73,12 @@ void *handle_client(void *arg)
       int room_id = atoi(strtok(NULL, "|"));
       start_test(socket_fd, user_id, room_id);
     }
-    else if (strcmp(cmd, "GET_QUESTION") == 0)
-    {
-      int room_id = atoi(strtok(NULL, "|"));
-      int q_num = atoi(strtok(NULL, "|"));
-      get_question(socket_fd, room_id, q_num);
-    }
+    // else if (strcmp(cmd, "GET_QUESTION") == 0)
+    // {
+    //   int room_id = atoi(strtok(NULL, "|"));
+    //   int q_num = atoi(strtok(NULL, "|"));
+    //   get_question(socket_fd, room_id, q_num);
+    // }
     else if (strcmp(cmd, "SUBMIT_ANSWER") == 0)
     {
       int room_id = atoi(strtok(NULL, "|"));
@@ -96,13 +96,13 @@ void *handle_client(void *arg)
       int room_id = atoi(strtok(NULL, "|"));
       view_results(socket_fd, room_id);
     }
-    else if (strcmp(cmd, "PRACTICE_MODE") == 0)
-    {
-      char *difficulty = strtok(NULL, "|");
-      char *category = strtok(NULL, "|");
-      int num_q = atoi(strtok(NULL, "|"));
-      practice_mode(socket_fd, user_id, difficulty, category, num_q);
-    }
+    // else if (strcmp(cmd, "PRACTICE_MODE") == 0)
+    // {
+    //   char *difficulty = strtok(NULL, "|");
+    //   char *category = strtok(NULL, "|");
+    //   int num_q = atoi(strtok(NULL, "|"));
+    //   practice_mode(socket_fd, user_id, difficulty, category, num_q);
+    // }
     else if (strcmp(cmd, "LEADERBOARD") == 0)
     {
       int limit = 10;
@@ -123,16 +123,16 @@ void *handle_client(void *arg)
     {
       get_difficulty_stats(socket_fd, user_id);
     }
-    else if (strcmp(cmd, "IMPORT_QUESTIONS") == 0)
-    {
-      char *filename = strtok(NULL, "|");
-      if (filename)
-      {
-        import_questions_from_csv(filename);
-        char response[] = "IMPORT_OK|Questions imported\n";
-        send(socket_fd, response, strlen(response), 0);
-      }
-    }
+    // else if (strcmp(cmd, "IMPORT_QUESTIONS") == 0)
+    // {
+    //   char *filename = strtok(NULL, "|");
+    //   if (filename)
+    //   {
+    //     import_questions_from_csv(filename);
+    //     char response[] = "IMPORT_OK|Questions imported\n";
+    //     send(socket_fd, response, strlen(response), 0);
+    //   }
+    // }
     else if (strcmp(cmd, "ADMIN_DASHBOARD") == 0)
     {
       get_admin_dashboard(socket_fd, user_id);

@@ -68,10 +68,19 @@ void *handle_client(void *arg)
       int room_id = atoi(strtok(NULL, "|"));
       join_test_room(socket_fd, user_id, room_id);
     }
+    else if (strcmp(cmd, "LIST_MY_ROOMS") == 0)
+    {
+      list_my_rooms(socket_fd, user_id);
+    }
     else if (strcmp(cmd, "START_TEST") == 0)
     {
       int room_id = atoi(strtok(NULL, "|"));
       start_test(socket_fd, user_id, room_id);
+    }
+    else if (strcmp(cmd, "CLOSE_ROOM") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      close_room(socket_fd, user_id, room_id);
     }
     // else if (strcmp(cmd, "GET_QUESTION") == 0)
     // {
@@ -79,6 +88,16 @@ void *handle_client(void *arg)
     //   int q_num = atoi(strtok(NULL, "|"));
     //   get_question(socket_fd, room_id, q_num);
     // }
+    else if (strstr(buffer, "GET_USER_ROOMS")) 
+    {
+      char *user_id_str = buffer + 15; // skip "GET_USER_ROOMS|"
+      int user_id = atoi(user_id_str);
+      handle_get_user_rooms(socket_fd, user_id);
+    }
+    else if (strstr(buffer, "ADD_QUESTION")) {
+    char *data = buffer + 13; // skip "ADD_QUESTION|"
+    handle_add_question(socket_fd, data);
+    }
     else if (strcmp(cmd, "SUBMIT_ANSWER") == 0)
     {
       int room_id = atoi(strtok(NULL, "|"));

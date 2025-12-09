@@ -4,6 +4,7 @@
 #include <gtk/gtk.h>
 
 #define SERVER_IP "127.0.0.1"
+// #define SERVER_IP "172.18.37.119"
 #define SERVER_PORT 8888
 #define BUFFER_SIZE 4096
 

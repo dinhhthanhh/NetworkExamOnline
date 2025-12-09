@@ -1,9 +1,78 @@
-// #include "questions.h"
-// #include "db.h"
-// #include <sys/socket.h>
+#include "questions.h"
+#include "db.h"
+#include <sys/socket.h>
 
-// extern ServerData server_data;
-// extern sqlite3 *db;
+extern ServerData server_data;
+extern sqlite3 *db;
+
+void handle_get_user_rooms(int client_socket, int user_id)
+{
+    char query[256];
+    snprintf(query, sizeof(query), 
+             "SELECT id, name FROM rooms WHERE host_id = %d AND is_active = 1", 
+             user_id);
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) != SQLITE_OK) {
+        send(client_socket, "ERROR|Database error\n", 21, 0);
+        return;
+    }
+    
+    char response[4096] = "ROOMS_LIST";
+    int has_rooms = 0;
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        has_rooms = 1;
+        int room_id = sqlite3_column_int(stmt, 0);
+        const char *room_name = (const char *)sqlite3_column_text(stmt, 1);
+        
+        char room_entry[256];
+        snprintf(room_entry, sizeof(room_entry), "|%d:%s", room_id, room_name);
+        strcat(response, room_entry);
+    }
+    
+    sqlite3_finalize(stmt);
+    
+    if (!has_rooms) {
+        send(client_socket, "NO_ROOMS\n", 9, 0);
+    } else {
+        strcat(response, "\n");
+        send(client_socket, response, strlen(response), 0);
+    }
+}
+
+void handle_add_question(int client_socket, char *data)
+{
+    pthread_mutex_lock(&server_data.lock);
+    // Parse: room_id|question|opt1|opt2|opt3|opt4
+    char *room_id_str = strtok(data, "|");
+    char *question = strtok(NULL, "|");
+    char *opt1 = strtok(NULL, "|");
+    char *opt2 = strtok(NULL, "|");
+    char *opt3 = strtok(NULL, "|");
+    char *opt4 = strtok(NULL, "|");
+    
+    if (!room_id_str || !question || !opt1 || !opt2 || !opt3 || !opt4) {
+        send(client_socket, "ERROR|Invalid data\n", 19, 0);
+        return;
+    }
+
+    int room_id = atoi(room_id_str);
+    
+    // Insert vào database
+    char query[2048];
+    snprintf(query, sizeof(query),
+             "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer) "
+             "VALUES (%d, '%s', '%s', '%s', '%s', '%s', 0)",
+             room_id, question, opt1, opt2, opt3, opt4);
+    
+    if (sqlite3_exec(db, query, NULL, NULL, NULL) == SQLITE_OK) {
+        send(client_socket, "QUESTION_ADDED\n", 15, 0);
+    } else {
+        send(client_socket, "ERROR|Failed to insert\n", 23, 0);
+    }
+    pthread_mutex_unlock(&server_data.lock);
+}
 
 // void get_question(int socket_fd, int room_id, int question_num)
 // {

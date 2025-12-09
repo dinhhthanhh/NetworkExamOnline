@@ -21,12 +21,22 @@ GtkWidget *room_list;
 int time_remaining = 0;
 int test_active = 0;
 int selected_room_id = -1;
+int current_user_id = -1;
 
 typedef struct
 {
     GtkWidget *user_entry;
     GtkWidget *pass_entry;
 } LoginEntries;
+
+typedef struct {
+    GtkWidget *room_combo;
+    GtkWidget *question_entry;
+    GtkWidget *opt1_entry;
+    GtkWidget *opt2_entry;
+    GtkWidget *opt3_entry;
+    GtkWidget *opt4_entry;
+} QuestionFormData;
 
 typedef struct {
     int total_tests;
@@ -558,6 +568,13 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
 
     if (n > 0 && strstr(buffer, "LOGIN_OK"))
     {
+        // Parse response: LOGIN_OK|user_id|token
+        char *token_start = strchr(buffer, '|');
+        if (token_start) {
+            token_start++; // skip first '|'
+            current_user_id = atoi(token_start);
+        }
+        
         strncpy(client.username, username, sizeof(client.username) - 1);
         create_main_menu();
     }
@@ -797,6 +814,115 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
         }
     }
     gtk_widget_destroy(GTK_WIDGET(dialog));
+}
+
+// Hàm hiển thị dialog
+void show_success_dialog(const char *message)
+{
+    GtkWidget *dialog = gtk_message_dialog_new(NULL,
+                                               GTK_DIALOG_MODAL,
+                                               GTK_MESSAGE_INFO,
+                                               GTK_BUTTONS_OK,
+                                               "%s", message);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+
+void show_error_dialog(const char *message)
+{
+    GtkWidget *dialog = gtk_message_dialog_new(NULL,
+                                               GTK_DIALOG_MODAL,
+                                               GTK_MESSAGE_ERROR,
+                                               GTK_BUTTONS_OK,
+                                               "%s", message);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+
+void request_user_rooms(GtkWidget *room_combo)
+{
+    char request[256];
+    snprintf(request, sizeof(request), "GET_USER_ROOMS|%d\n", current_user_id);
+    send_message(request);
+    
+    // Nhận response và populate combo box
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    if (n > 0) {
+        buffer[n] = '\0';
+        // Parse: ROOMS_LIST|room_id1:room_name1|room_id2:room_name2|...
+        if (strstr(buffer, "ROOMS_LIST")) {
+            char *token = strtok(buffer + 11, "|"); // skip "ROOMS_LIST|"
+            while (token != NULL) {
+                char *colon = strchr(token, ':');
+                if (colon) {
+                    *colon = '\0';
+                    char *room_id = token;
+                    char *room_name = colon + 1;
+                    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), room_id, room_name);
+                }
+                token = strtok(NULL, "|");
+            }
+            gtk_combo_box_set_active(GTK_COMBO_BOX(room_combo), 0);
+        } else if (strstr(buffer, "NO_ROOMS")) {
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), "-1", "No rooms created yet");
+            gtk_widget_set_sensitive(room_combo, FALSE);
+        }
+    }
+}
+
+// Callback khi submit question
+void on_submit_question(GtkWidget *widget, gpointer user_data)
+{
+    QuestionFormData *data = (QuestionFormData *)user_data;
+    
+    // Lấy room_id từ combo box
+    const char *room_id_str = gtk_combo_box_get_active_id(GTK_COMBO_BOX(data->room_combo));
+    if (!room_id_str || atoi(room_id_str) == -1) {
+        show_error_dialog("Please select a valid room!");
+        return;
+    }
+    
+    // Lấy dữ liệu từ form
+    const char *question = gtk_entry_get_text(GTK_ENTRY(data->question_entry));
+    const char *opt1 = gtk_entry_get_text(GTK_ENTRY(data->opt1_entry));
+    const char *opt2 = gtk_entry_get_text(GTK_ENTRY(data->opt2_entry));
+    const char *opt3 = gtk_entry_get_text(GTK_ENTRY(data->opt3_entry));
+    const char *opt4 = gtk_entry_get_text(GTK_ENTRY(data->opt4_entry));
+    
+    // Validation
+    if (strlen(question) == 0 || strlen(opt1) == 0 || strlen(opt2) == 0 || 
+        strlen(opt3) == 0 || strlen(opt4) == 0) {
+        show_error_dialog("Please fill all fields!");
+        return;
+    }
+    
+    // Gửi request đến server
+    char request[2048];
+    snprintf(request, sizeof(request), 
+             "ADD_QUESTION|%d|%s|%s|%s|%s|%s\n",
+             atoi(room_id_str), question, opt1, opt2, opt3, opt4);
+    send_message(request);
+    
+    // Nhận response
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    if (n > 0) {
+        buffer[n] = '\0';
+        if (strstr(buffer, "QUESTION_ADDED")) {
+            show_success_dialog("Question added successfully!");
+            // Reset form
+            gtk_entry_set_text(GTK_ENTRY(data->question_entry), "");
+            gtk_entry_set_text(GTK_ENTRY(data->opt1_entry), "");
+            gtk_entry_set_text(GTK_ENTRY(data->opt2_entry), "");
+            gtk_entry_set_text(GTK_ENTRY(data->opt3_entry), "");
+            gtk_entry_set_text(GTK_ENTRY(data->opt4_entry), "");
+        } else {
+            show_error_dialog("Failed to add question!");
+        }
+    }
 }
 
 // Hàm tham gia phòng - ĐÃ SỬA
@@ -1233,12 +1359,22 @@ void create_question_bank_screen()
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
     GtkWidget *info = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(info), "<span foreground='#27ae60' weight='bold'>✏️ Add new questions:</span>");
+    gtk_label_set_markup(GTK_LABEL(info), "<span foreground='#27ae60' weight='bold'>✏️ Add new questions to your rooms:</span>");
     gtk_box_pack_start(GTK_BOX(vbox), info, FALSE, FALSE, 0);
 
     GtkWidget *form_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_margin_start(form_box, 10);
     gtk_widget_set_margin_end(form_box, 10);
+
+    // **MỚI: Dropdown chọn room**
+    GtkWidget *room_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(room_label), "<span foreground='#e74c3c' weight='bold'>Select Your Room:</span>");
+    GtkWidget *room_combo = gtk_combo_box_text_new();
+    gtk_box_pack_start(GTK_BOX(form_box), room_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(form_box), room_combo, FALSE, FALSE, 0);
+
+    // Request danh sách rooms từ server
+    request_user_rooms(room_combo);
 
     GtkWidget *question_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(question_label), "<span foreground='#34495e'>Question:</span>");
@@ -1273,7 +1409,7 @@ void create_question_bank_screen()
     gtk_box_pack_start(GTK_BOX(form_box), options_label, FALSE, FALSE, 5);
 
     GtkWidget *opt1_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(opt1_label), "<span foreground='#34495e'>Option 1 (Correct):</span>");
+    gtk_label_set_markup(GTK_LABEL(opt1_label), "<span foreground='#27ae60'>Option 1 (Correct ✓):</span>");
     GtkWidget *opt1_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(opt1_entry), "Correct answer");
     gtk_box_pack_start(GTK_BOX(form_box), opt1_label, FALSE, FALSE, 0);
@@ -1314,8 +1450,119 @@ void create_question_bank_screen()
     gtk_container_add(GTK_CONTAINER(scroll), form_box);
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
 
+    // Struct để truyền data vào callback
+    QuestionFormData *data = g_malloc(sizeof(QuestionFormData));
+    data->room_combo = room_combo;
+    data->question_entry = question_entry;
+    data->opt1_entry = opt1_entry;
+    data->opt2_entry = opt2_entry;
+    data->opt3_entry = opt3_entry;
+    data->opt4_entry = opt4_entry;
+
+    g_signal_connect(submit_btn, "clicked", G_CALLBACK(on_submit_question), data);
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
+    
     show_view(vbox);
+}
+
+// Callback khi nhấn button Start Room
+static void on_start_room_clicked(GtkWidget *widget, gpointer data) {
+    int room_id = GPOINTER_TO_INT(data);
+    
+    char msg[64];
+    snprintf(msg, sizeof(msg), "START_TEST|%d\n", room_id);
+    send_message(msg);
+    
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    GtkWidget *dialog;
+    if (n > 0 && strncmp(buffer, "START_TEST_OK", 13) == 0) {
+        dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                       GTK_MESSAGE_INFO,
+                                       GTK_BUTTONS_OK,
+                                       "✅ Room started successfully!");
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        
+        // Refresh admin panel
+        create_admin_panel();
+    } else {
+        // Parse error message
+        char *error_msg = strchr(buffer, '|');
+        if (error_msg) {
+            error_msg++; // Skip '|'
+        } else {
+            error_msg = "Failed to start room";
+        }
+        
+        dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                       GTK_MESSAGE_ERROR,
+                                       GTK_BUTTONS_OK,
+                                       "❌ %s", error_msg);
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+    }
+}
+
+// Callback khi nhấn button Close Room
+static void on_close_room_clicked(GtkWidget *widget, gpointer data) {
+    int room_id = GPOINTER_TO_INT(data);
+    
+    // Confirm dialog
+    GtkWidget *confirm_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                       GTK_MESSAGE_QUESTION,
+                                                       GTK_BUTTONS_YES_NO,
+                                                       "Are you sure you want to close this room?");
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(confirm_dialog),
+                                             "This room will be removed from the list.");
+    
+    int response = gtk_dialog_run(GTK_DIALOG(confirm_dialog));
+    gtk_widget_destroy(confirm_dialog);
+    
+    if (response != GTK_RESPONSE_YES) {
+        return;
+    }
+    
+    char msg[64];
+    snprintf(msg, sizeof(msg), "CLOSE_ROOM|%d\n", room_id);
+    send_message(msg);
+    
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    GtkWidget *dialog;
+    if (n > 0 && strncmp(buffer, "CLOSE_ROOM_OK", 13) == 0) {
+        dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                       GTK_MESSAGE_INFO,
+                                       GTK_BUTTONS_OK,
+                                       "✅ Room closed successfully!");
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        
+        // Refresh admin panel
+        create_admin_panel();
+    } else {
+        // Parse error message
+        char *error_msg = strchr(buffer, '|');
+        if (error_msg) {
+            error_msg++; // Skip '|'
+        } else {
+            error_msg = "Failed to close room";
+        }
+        
+        dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                       GTK_MESSAGE_ERROR,
+                                       GTK_BUTTONS_OK,
+                                       "❌ %s", error_msg);
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+    }
 }
 
 void create_admin_panel()
@@ -1326,33 +1573,118 @@ void create_admin_panel()
     gtk_widget_set_margin_end(vbox, 20);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>⚙️ ADMIN PANEL</span>");
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>⚙️ ADMIN PANEL - My Rooms</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
-    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *admin_view = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(admin_view), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(admin_view), GTK_WRAP_WORD);
-    gtk_container_add(GTK_CONTAINER(scroll), admin_view);
-    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
-
-    send_message("ADMIN_DASHBOARD\n");
+    // Request rooms từ server
+    send_message("LIST_MY_ROOMS\n");
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
 
-    GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(admin_view));
-    if (n > 0 && buffer[0] != '\0')
-    {
-        gtk_text_buffer_set_text(text_buffer, buffer, -1);
-    }
-    else
-    {
-        gtk_text_buffer_set_text(text_buffer, "📊 Admin data loading...", -1);
+    // Tạo scrolled window chứa list rooms
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                  GTK_POLICY_NEVER,
+                                  GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_size_request(scroll, -1, 400);
+
+    GtkWidget *list_box = gtk_list_box_new();
+    gtk_container_add(GTK_CONTAINER(scroll), list_box);
+    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
+
+    // Parse và hiển thị rooms
+    if (n > 0 && strncmp(buffer, "LIST_MY_ROOMS_OK", 16) == 0) {
+        char *line = strtok(buffer, "\n");
+        line = strtok(NULL, "\n"); // Bỏ qua header line
+
+        int room_count = 0;
+        while (line != NULL) {
+            if (strncmp(line, "ROOM|", 5) == 0) {
+                // Parse: ROOM|id|name|duration|status|question_info
+                char *room_data = strdup(line);
+                strtok(room_data, "|"); // Skip "ROOM"
+                
+                int room_id = atoi(strtok(NULL, "|"));
+                char *room_name = strtok(NULL, "|");
+                int duration = atoi(strtok(NULL, "|"));
+                char *status = strtok(NULL, "|");
+                char *question_info = strtok(NULL, "|");
+
+                // Tạo row cho room
+                GtkWidget *row = gtk_list_box_row_new();
+                GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+                gtk_widget_set_margin_top(hbox, 10);
+                gtk_widget_set_margin_bottom(hbox, 10);
+                gtk_widget_set_margin_start(hbox, 15);
+                gtk_widget_set_margin_end(hbox, 15);
+                gtk_container_add(GTK_CONTAINER(row), hbox);
+
+                // Room info
+                char info_text[512];
+                snprintf(info_text, sizeof(info_text),
+                        "<b>%s</b> (ID: %d)\n"
+                        "⏱️ Duration: %d minutes | 📝 %s | Status: %s",
+                        room_name, room_id, duration, question_info, status);
+                
+                GtkWidget *info_label = gtk_label_new(NULL);
+                gtk_label_set_markup(GTK_LABEL(info_label), info_text);
+                gtk_label_set_xalign(GTK_LABEL(info_label), 0);
+                gtk_box_pack_start(GTK_BOX(hbox), info_label, TRUE, TRUE, 0);
+
+                // Action buttons (chỉ hiện nếu room còn Open)
+                if (strcmp(status, "Open") == 0) {
+                    // Button box cho Start và Close
+                    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+                    
+                    // Start button
+                    GtkWidget *start_btn = gtk_button_new_with_label("▶️ START");
+                    style_button(start_btn, "#27ae60");
+                    gtk_widget_set_size_request(start_btn, 90, 40);
+                    g_signal_connect(start_btn, "clicked", 
+                                   G_CALLBACK(on_start_room_clicked), 
+                                   GINT_TO_POINTER(room_id));
+                    gtk_box_pack_start(GTK_BOX(btn_box), start_btn, FALSE, FALSE, 0);
+                    
+                    // Close button
+                    GtkWidget *close_btn = gtk_button_new_with_label("🗑️ CLOSE");
+                    style_button(close_btn, "#e74c3c");
+                    gtk_widget_set_size_request(close_btn, 90, 40);
+                    g_signal_connect(close_btn, "clicked", 
+                                   G_CALLBACK(on_close_room_clicked), 
+                                   GINT_TO_POINTER(room_id));
+                    gtk_box_pack_start(GTK_BOX(btn_box), close_btn, FALSE, FALSE, 0);
+                    
+                    gtk_box_pack_end(GTK_BOX(hbox), btn_box, FALSE, FALSE, 0);
+                } else {
+                    GtkWidget *closed_label = gtk_label_new("🔒 Started");
+                    gtk_widget_set_size_request(closed_label, 185, 40);
+                    gtk_box_pack_end(GTK_BOX(hbox), closed_label, FALSE, FALSE, 0);
+                }
+
+                gtk_container_add(GTK_CONTAINER(list_box), row);
+                room_count++;
+                free(room_data);
+            }
+            line = strtok(NULL, "\n");
+        }
+
+        if (room_count == 0) {
+            GtkWidget *empty_label = gtk_label_new("📭 You haven't created any rooms yet");
+            gtk_widget_set_margin_top(empty_label, 50);
+            gtk_widget_set_margin_bottom(empty_label, 50);
+            gtk_container_add(GTK_CONTAINER(list_box), empty_label);
+        }
+    } else {
+        GtkWidget *error_label = gtk_label_new("❌ Failed to load rooms");
+        gtk_widget_set_margin_top(error_label, 50);
+        gtk_widget_set_margin_bottom(error_label, 50);
+        gtk_container_add(GTK_CONTAINER(list_box), error_label);
     }
 
+    // Back button
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
     style_button(back_btn, "#95a5a6");

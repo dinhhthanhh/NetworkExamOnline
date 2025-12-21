@@ -1,0 +1,164 @@
+```
+REFACTORED CLIENT ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════
+
+┌────────────────────────────────────────────────────────────────┐
+│                         main.c                                 │
+│                    (Entry Point)                               │
+│  - Connect to server                                           │
+│  - Initialize GTK                                              │
+│  - Call create_login_screen()                                  │
+└─────────────────────┬──────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      ui.c (MAIN)                                │
+│              (Global State & Main Menu)                         │
+│  - Global variables (client, windows, widgets)                 │
+│  - create_main_menu() → Điều hướng các module                  │
+└──┬───────┬───────┬────────┬─────────┬─────────┬────────────────┘
+   │       │       │        │         │         │
+   │       │       │        │         │         │
+   ▼       ▼       ▼        ▼         ▼         ▼
+┌─────┐┌──────┐┌───────┐┌────────┐┌───────┐┌──────────┐
+│Auth ││Room  ││Stats  ││Admin   ││Practice││UI Utils  │
+│UI   ││UI    ││UI     ││UI      ││UI      ││          │
+└─────┘└──────┘└───────┘└────────┘└───────┘└──────────┘
+
+
+MODULE DETAILS:
+═══════════════
+
+┌──────────────────────────────────┐
+│   1. ui_utils.c/h                │
+│   (Common UI Utilities)          │
+├──────────────────────────────────┤
+│ • show_view()                    │
+│ • style_button()                 │
+│ • show_success/error_dialog()    │
+│ • setup_leaderboard_css()        │
+│ • update_timer()                 │
+└──────────────────────────────────┘
+
+┌──────────────────────────────────┐
+│   2. auth_ui.c/h                 │
+│   (Authentication)               │
+├──────────────────────────────────┤
+│ • create_login_screen()          │
+│ • on_login_clicked()             │
+│ • on_register_clicked()          │
+└──────────────────────────────────┘
+
+┌──────────────────────────────────┐
+│   3. room_ui.c/h                 │
+│   (Room Management)              │
+├──────────────────────────────────┤
+│ • create_test_mode_screen()      │
+│ • load_rooms_list()              │
+│ • on_room_button_clicked()       │
+│ • on_join_room_clicked()         │
+│ • on_create_room_clicked()       │
+└──────────────────────────────────┘
+
+┌──────────────────────────────────┐
+│   4. stats_ui.c/h                │
+│   (Statistics & Leaderboard)     │
+├──────────────────────────────────┤
+│ • create_stats_screen()          │
+│ • create_leaderboard_screen()    │
+│ • parse_stats_data()             │
+│ • parse_leaderboard_data()       │
+│ • on_draw_chart() [Cairo]        │
+└──────────────────────────────────┘
+
+┌──────────────────────────────────┐
+│   5. admin_ui.c/h                │
+│   (Admin Features)               │
+├──────────────────────────────────┤
+│ • create_admin_panel()           │
+│ • create_question_bank_screen()  │
+│ • on_submit_question()           │
+│ • request_user_rooms()           │
+│ • on_start_room_clicked()        │
+│ • on_close_room_clicked()        │
+└──────────────────────────────────┘
+
+┌──────────────────────────────────┐
+│   6. practice_ui.c/h             │
+│   (Practice Mode)                │
+├──────────────────────────────────┤
+│ • create_practice_screen()       │
+│ • practice_thread_func()         │
+│ • update_practice_text()         │
+└──────────────────────────────────┘
+
+
+NETWORK LAYER:
+══════════════
+
+┌──────────────────────────────────┐
+│         net.c/h                  │
+│    (Network Communication)       │
+├──────────────────────────────────┤
+│ • send_message()                 │
+│ • receive_message()              │
+│ • net_set_timeout()              │
+│ • net_set_debug()                │
+└─────────────┬────────────────────┘
+              │
+              ▼
+        ┌─────────────┐
+        │   SERVER    │
+        └─────────────┘
+
+
+DATA FLOW EXAMPLE:
+══════════════════
+
+User clicks "View Statistics"
+         │
+         ▼
+  create_main_menu() [ui.c]
+         │
+         ▼
+  create_stats_screen() [stats_ui.c]
+         │
+         ├──► send_message("USER_STATS\n") [net.c]
+         │
+         ├──► receive_message() [net.c]
+         │
+         ├──► parse_stats_data() [stats_ui.c]
+         │
+         ├──► on_draw_chart() [stats_ui.c]
+         │
+         └──► show_view() [ui_utils.c]
+
+
+COMPILATION:
+════════════
+
+Makefile compiles all modules:
+
+  main.c ────┐
+  ui.c ──────┤
+  net.c ─────┤
+  ui_utils.c ┤
+  auth_ui.c ─┼──► quiz_client (executable)
+  room_ui.c ─┤
+  stats_ui.c ┤
+  admin_ui.c ┤
+  practice_ui.c ┘
+
+
+BENEFITS:
+═════════
+
+✅ Modular        - Easy to find and modify specific features
+✅ Maintainable   - Each file has single responsibility  
+✅ Scalable       - Add new modules without touching others
+✅ Testable       - Can test individual modules
+✅ Collaborative  - Multiple developers can work on different modules
+✅ Readable       - Small files, clear purpose
+✅ Professional   - Follows software engineering best practices
+
+```

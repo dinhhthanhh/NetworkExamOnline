@@ -46,6 +46,33 @@ void net_set_timeout(int sockfd) {
 
 extern ClientData client;
 
+// Flush any pending data in socket buffer to avoid stale responses
+void flush_socket_buffer(int sockfd) {
+    if (sockfd <= 0) return;
+    
+    // Set socket to non-blocking temporarily
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 10000; // 10ms timeout
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    
+    char trash[4096];
+    int flushed = 0;
+    while (recv(sockfd, trash, sizeof(trash), 0) > 0) {
+        flushed++;
+        if (flushed > 10) break; // Safety limit
+    }
+    
+    // Restore normal timeout
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    
+    if (flushed > 0 && net_debug_enabled) {
+        printf("[FLUSH] Cleared %d stale buffers\n", flushed);
+    }
+}
+
 void send_message(const char *msg) {
     if (client.socket_fd > 0) {
         // Debug: in message gửi đi

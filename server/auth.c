@@ -84,10 +84,11 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
   sqlite3_stmt *stmt;
   char response[300];
   char hashed_password[65];
+  char user_role[20] = "user";
   hash_password(password, hashed_password);
 
   snprintf(query, sizeof(query),
-           "SELECT id FROM users WHERE username='%s' AND password='%s';", username, hashed_password);
+           "SELECT id, role FROM users WHERE username='%s' AND password='%s';", username, hashed_password);
 
   pthread_mutex_lock(&server_data.lock);
 
@@ -96,6 +97,12 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
     if (sqlite3_step(stmt) == SQLITE_ROW)
     {
       *user_id = sqlite3_column_int(stmt, 0);
+      
+      // Get role (column 1)
+      const char *role = (const char *)sqlite3_column_text(stmt, 1);
+      if (role) {
+        strncpy(user_role, role, sizeof(user_role) - 1);
+      }
 
       // Generate session token
       char token[64];
@@ -114,7 +121,7 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
         }
       }
 
-      snprintf(response, sizeof(response), "LOGIN_OK|%d|%s\n", *user_id, token);
+      snprintf(response, sizeof(response), "LOGIN_OK|%d|%s|%s\n", *user_id, token, user_role);
       log_activity(*user_id, "LOGIN", "User logged in");
     }
     else

@@ -155,3 +155,47 @@ void get_difficulty_stats(int socket_fd, int user_id)
   sqlite3_finalize(stmt);
   pthread_mutex_unlock(&server_data.lock);
 }
+
+void get_user_test_history(int socket_fd, int user_id)
+{
+  char query[800];
+  sqlite3_stmt *stmt;
+
+  snprintf(query, sizeof(query),
+           "SELECT r.id, rm.name, r.score, r.total_questions, "
+           "r.time_taken, datetime(r.completed_at, 'localtime') "
+           "FROM results r "
+           "JOIN rooms rm ON r.room_id = rm.id "
+           "WHERE r.user_id = %d "
+           "ORDER BY r.completed_at DESC LIMIT 20;",
+           user_id);
+
+  pthread_mutex_lock(&server_data.lock);
+
+  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
+  {
+    char response[8192];
+    strcpy(response, "TEST_HISTORY|");
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+      int result_id = sqlite3_column_int(stmt, 0);
+      const char *room_name = (const char *)sqlite3_column_text(stmt, 1);
+      int score = sqlite3_column_int(stmt, 2);
+      int total = sqlite3_column_int(stmt, 3);
+      int time_taken = sqlite3_column_int(stmt, 4);
+      const char *completed = (const char *)sqlite3_column_text(stmt, 5);
+
+      char entry[400];
+      snprintf(entry, sizeof(entry), "%d|%s|%d|%d|%d|%s|",
+               result_id, room_name, score, total, time_taken, completed ? completed : "N/A");
+      strcat(response, entry);
+    }
+
+    strcat(response, "\n");
+    send(socket_fd, response, strlen(response), 0);
+  }
+
+  sqlite3_finalize(stmt);
+  pthread_mutex_unlock(&server_data.lock);
+}

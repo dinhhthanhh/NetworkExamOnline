@@ -12,6 +12,7 @@ typedef struct {
     int socket_fd;
     int user_id;
     char username[50];
+    char role[20];  // "user" or "admin"
     int current_room;
     int current_question;
     int selected_answer;

@@ -1,16 +1,16 @@
 #ifndef PRACTICE_UI_H
 #define PRACTICE_UI_H
 
-#include "include/client_common.h"
+#include <gtk/gtk.h>
 
-// Practice mode screen
+// Tạo màn hình chế độ luyện tập
 void create_practice_screen(void);
 
-// Practice thread
-gpointer practice_thread_func(gpointer data);
-gboolean update_practice_text(gpointer data);
+// Cleanup khi thoát practice mode
+void cleanup_practice_ui(void);
 
-// External global variables
-extern GtkTextBuffer *g_practice_buffer;
+// Callback functions
+void on_practice_answer_selected(GtkWidget *widget, gpointer data);
+void on_submit_practice_clicked(GtkWidget *widget, gpointer data);
 
 #endif // PRACTICE_UI_H

@@ -32,7 +32,6 @@ static gboolean update_timer(gpointer data) {
     time_t now = time(NULL);
     long elapsed = now - exam_start_time;
     long remaining = (exam_duration * 60) - elapsed;
-    
     if (remaining <= 0) {
         // Hết giờ - auto submit
         gtk_label_set_markup(GTK_LABEL(timer_label), 
@@ -421,6 +420,8 @@ void create_exam_page(int room_id) {
             
             GtkWidget *radio = gtk_radio_button_new_with_label(group, option_text);
             group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
+
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), FALSE);
             
             g_signal_connect(radio, "toggled", 
                            G_CALLBACK(on_answer_selected), 

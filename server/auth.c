@@ -37,41 +37,53 @@ void register_user(int socket_fd, char *username, char *password)
   char hashed_password[65];
 
   hash_password(password, hashed_password);
-  if (!username || !password)
+  
+  if (!username || !password || strlen(username) == 0 || strlen(password) == 0)
   {
     snprintf(response, sizeof(response), "REGISTER_FAIL|Missing username or password\n");
     send(socket_fd, response, strlen(response), 0);
     return;
   }
 
-  char query[300];
-  char *err_msg = 0;
-
-  snprintf(query, sizeof(query),
-           "INSERT INTO users (username, password) VALUES ('%s', '%s');",
-           username, hashed_password);
+  // SỬ DỤNG PREPARED STATEMENT thay vì string concatenation
+  const char *query = "INSERT INTO users (username, password) VALUES (?, ?);";
+  sqlite3_stmt *stmt;
 
   pthread_mutex_lock(&server_data.lock);
 
-  if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK)
+  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
   {
-    snprintf(response, sizeof(response), "REGISTER_FAIL|Username already exists\n");
-    fprintf(stderr, "SQL error: %s\n", err_msg);
-    sqlite3_free(err_msg);
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, hashed_password, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) == SQLITE_DONE)
+    {
+      snprintf(response, sizeof(response), "REGISTER_OK|Account created successfully\n");
+
+      int idx = server_data.user_count;
+      server_data.users[idx].user_id = (int)sqlite3_last_insert_rowid(db);
+      strncpy(server_data.users[idx].username, username, 
+              sizeof(server_data.users[idx].username) - 1);
+      // LƯU HASHED PASSWORD, KHÔNG LƯU PLAINTEXT
+      strncpy(server_data.users[idx].password, hashed_password, 
+              sizeof(server_data.users[idx].password) - 1);
+      server_data.users[idx].is_online = 0;
+      server_data.users[idx].socket_fd = -1;
+      server_data.user_count++;
+
+      printf("User registered: %s (ID: %d)\n", username, server_data.users[idx].user_id);
+    }
+    else
+    {
+      snprintf(response, sizeof(response), "REGISTER_FAIL|Username already exists\n");
+      fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+    sqlite3_finalize(stmt);
   }
   else
   {
-    snprintf(response, sizeof(response), "REGISTER_OK|Account created successfully\n");
-
-    int idx = server_data.user_count;
-    server_data.users[idx].user_id = (int)sqlite3_last_insert_rowid(db);
-    strncpy(server_data.users[idx].username, username, sizeof(server_data.users[idx].username) - 1);
-    strncpy(server_data.users[idx].password, password, sizeof(server_data.users[idx].password) - 1);
-    server_data.users[idx].is_online = 0;
-    server_data.users[idx].socket_fd = -1;
-    server_data.user_count++;
-
-    printf("User registered: %s (ID: %d)\n", username, server_data.users[idx].user_id);
+    snprintf(response, sizeof(response), "REGISTER_FAIL|Database error\n");
+    fprintf(stderr, "Prepare error: %s\n", sqlite3_errmsg(db));
   }
 
   pthread_mutex_unlock(&server_data.lock);
@@ -80,25 +92,27 @@ void register_user(int socket_fd, char *username, char *password)
 
 void login_user(int socket_fd, char *username, char *password, int *user_id)
 {
-  char query[300];
-  sqlite3_stmt *stmt;
   char response[300];
   char hashed_password[65];
   char user_role[20] = "user";
+  
   hash_password(password, hashed_password);
 
-  snprintf(query, sizeof(query),
-           "SELECT id, role FROM users WHERE username='%s' AND password='%s';", username, hashed_password);
+  // SỬ DỤNG PREPARED STATEMENT
+  const char *query = "SELECT id, role FROM users WHERE username=? AND password=?;";
+  sqlite3_stmt *stmt;
 
   pthread_mutex_lock(&server_data.lock);
 
   if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
   {
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, hashed_password, -1, SQLITE_STATIC);
+
     if (sqlite3_step(stmt) == SQLITE_ROW)
     {
       *user_id = sqlite3_column_int(stmt, 0);
       
-      // Get role (column 1)
       const char *role = (const char *)sqlite3_column_text(stmt, 1);
       if (role) {
         strncpy(user_role, role, sizeof(user_role) - 1);
@@ -108,12 +122,13 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
       char token[64];
       generate_session_token(token, sizeof(token));
 
-      // Update user data with token and last activity
+      // Update user data
       for (int i = 0; i < server_data.user_count; i++)
       {
         if (server_data.users[i].user_id == *user_id)
         {
-          strncpy(server_data.users[i].session_token, token, sizeof(server_data.users[i].session_token) - 1);
+          strncpy(server_data.users[i].session_token, token, 
+                  sizeof(server_data.users[i].session_token) - 1);
           server_data.users[i].last_activity = time(NULL);
           server_data.users[i].is_online = 1;
           server_data.users[i].socket_fd = socket_fd;
@@ -121,16 +136,22 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
         }
       }
 
-      snprintf(response, sizeof(response), "LOGIN_OK|%d|%s|%s\n", *user_id, token, user_role);
+      snprintf(response, sizeof(response), "LOGIN_OK|%d|%s|%s\n", 
+               *user_id, token, user_role);
       log_activity(*user_id, "LOGIN", "User logged in");
     }
     else
     {
       snprintf(response, sizeof(response), "LOGIN_FAIL|Invalid credentials\n");
     }
+    sqlite3_finalize(stmt);
+  }
+  else
+  {
+    snprintf(response, sizeof(response), "LOGIN_FAIL|Database error\n");
+    fprintf(stderr, "Prepare error: %s\n", sqlite3_errmsg(db));
   }
 
-  sqlite3_finalize(stmt);
   pthread_mutex_unlock(&server_data.lock);
   send(socket_fd, response, strlen(response), 0);
 }

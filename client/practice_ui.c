@@ -34,7 +34,7 @@ static gboolean update_practice_timer(gpointer data) {
     if (remaining <= 0) {
         // Hết giờ - auto submit
         gtk_label_set_markup(GTK_LABEL(practice_timer_label), 
-                            "<span foreground='red' size='16000' weight='bold'>⏰ TIME'S UP!</span>");
+                            "<span foreground='red' size='16000' weight='bold'>TIME'S UP!</span>");
         
         if (practice_timer_id > 0) {
             g_source_remove(practice_timer_id);
@@ -62,14 +62,14 @@ static gboolean update_practice_timer(gpointer data) {
                                                              GTK_DIALOG_MODAL,
                                                              GTK_MESSAGE_INFO,
                                                              GTK_BUTTONS_OK,
-                                                             "⏰ Time's Up! Practice Auto-Submitted!");
+                                                             "Time's Up! Practice Auto-Submitted!");
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(result_dialog),
                                                      "Score: %d/%d (%.1f%%)\nTime: %d minutes",
                                                      score, total, (score * 100.0) / total, time_taken);
             gtk_dialog_run(GTK_DIALOG(result_dialog));
             gtk_widget_destroy(result_dialog);
             
-            create_main_menu(NULL, NULL);
+            create_main_menu();
         } else {
             cleanup_practice_ui();
             
@@ -77,12 +77,12 @@ static gboolean update_practice_timer(gpointer data) {
                                                              GTK_DIALOG_MODAL,
                                                              GTK_MESSAGE_ERROR,
                                                              GTK_BUTTONS_OK,
-                                                             "❌ Auto-submit failed: %s",
+                                                             "Auto-submit failed: %s",
                                                              buffer);
             gtk_dialog_run(GTK_DIALOG(error_dialog));
             gtk_widget_destroy(error_dialog);
             
-            create_main_menu(NULL, NULL);
+            create_main_menu();
         }
         
         return FALSE;
@@ -94,7 +94,7 @@ static gboolean update_practice_timer(gpointer data) {
     char timer_text[128];
     const char *color = (remaining < 300) ? "red" : "#27ae60";
     snprintf(timer_text, sizeof(timer_text),
-             "<span foreground='%s' size='16000' weight='bold'>⏱️ %02d:%02d</span>",
+             "<span foreground='%s' size='16000' weight='bold'>⏱ %02d:%02d</span>",
              color, minutes, seconds);
     
     gtk_label_set_markup(GTK_LABEL(practice_timer_label), timer_text);
@@ -184,7 +184,7 @@ void on_submit_practice_clicked(GtkWidget *widget, gpointer data) {
         gtk_dialog_run(GTK_DIALOG(result_dialog));
         gtk_widget_destroy(result_dialog);
         
-        create_main_menu(NULL, NULL);
+        create_main_menu();
         
     } else {
         cleanup_practice_ui();
@@ -193,12 +193,12 @@ void on_submit_practice_clicked(GtkWidget *widget, gpointer data) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ Submit failed: %s",
+                                                         "Submit failed: %s",
                                                          buffer);
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         
-        create_main_menu(NULL, NULL);
+        create_main_menu();
     }
 }
 
@@ -216,7 +216,7 @@ void create_practice_screen() {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ Cannot start practice");
+                                                         "Cannot start practice");
         
         if (strncmp(buffer, "ERROR", 5) == 0) {
             char *msg = strchr(buffer, '|');
@@ -228,7 +228,7 @@ void create_practice_screen() {
         
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
-        create_main_menu(NULL, NULL);
+        create_main_menu();
         return;
     }
     
@@ -252,11 +252,11 @@ void create_practice_screen() {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ No practice questions available");
+                                                         "No practice questions available");
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         free(original_buffer);
-        create_main_menu(NULL, NULL);
+        create_main_menu();
         return;
     }
     
@@ -310,7 +310,7 @@ void create_practice_screen() {
     
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-                        "<span size='20000' weight='bold'>🎯 PRACTICE MODE</span>");
+                        "<span size='20000' weight='bold'>PRACTICE MODE</span>");
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
     
     practice_timer_label = gtk_label_new(NULL);
@@ -354,26 +354,26 @@ void create_practice_screen() {
         gtk_box_pack_start(GTK_BOX(q_vbox), q_label, FALSE, FALSE, 0);
         
         GSList *group = NULL;
-        const char *labels[] = {"A", "B", "C", "D"};
-        
-        for (int j = 0; j < 4; j++) {
-            char option_text[150];
-            snprintf(option_text, sizeof(option_text), "%s. %s", 
-                    labels[j], practice_questions[i].options[j]);
-            
-            GtkWidget *radio = gtk_radio_button_new_with_label(group, option_text);
-            group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
-            
-            // QUAN TRỌNG: Không chọn mặc định
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), FALSE);
-            
-            g_signal_connect(radio, "toggled", 
-                           G_CALLBACK(on_practice_answer_selected), 
-                           GINT_TO_POINTER(i));
-            
-            gtk_box_pack_start(GTK_BOX(q_vbox), radio, FALSE, FALSE, 0);
-            practice_question_radios[i * 4 + j] = radio;
-        }
+
+    /* Dummy hidden radio để tránh auto-select */
+    GtkWidget *dummy = gtk_radio_button_new(NULL);
+    group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(dummy));
+
+    for (int j = 0; j < 4; j++) {
+        char option_text[150];
+        snprintf(option_text, sizeof(option_text),
+                "%c. %s", 'A' + j, practice_questions[i].options[j]);
+
+        GtkWidget *radio = gtk_radio_button_new_with_label(group, option_text);
+        group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
+
+        g_signal_connect(radio, "toggled",
+                        G_CALLBACK(on_practice_answer_selected),
+                        GINT_TO_POINTER(i));
+
+        gtk_box_pack_start(GTK_BOX(q_vbox), radio, FALSE, FALSE, 0);
+        practice_question_radios[i * 4 + j] = radio;
+    }
         
         gtk_container_add(GTK_CONTAINER(q_frame), q_vbox);
         gtk_box_pack_start(GTK_BOX(questions_box), q_frame, FALSE, FALSE, 0);
@@ -383,7 +383,7 @@ void create_practice_screen() {
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
     
     // Submit button
-    GtkWidget *submit_btn = gtk_button_new_with_label("📤 SUBMIT PRACTICE");
+    GtkWidget *submit_btn = gtk_button_new_with_label("SUBMIT PRACTICE");
     gtk_widget_set_size_request(submit_btn, 200, 50);
     g_signal_connect(submit_btn, "clicked", G_CALLBACK(on_submit_practice_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit_btn, FALSE, FALSE, 0);

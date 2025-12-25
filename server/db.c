@@ -13,20 +13,22 @@ void init_database() {
   }
 
   const char *sql_users = "CREATE TABLE IF NOT EXISTS users("
-                    "id INTEGER PRIMARY KEY,"
-                    "username TEXT UNIQUE,"
-                    "password TEXT,"
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "username TEXT UNIQUE NOT NULL,"
+                    "password TEXT NOT NULL,"
                     "role TEXT DEFAULT 'user',"  // 'user' or 'admin'
                     "created_at DATETIME DEFAULT CURRENT_TIMESTAMP);";
 
   const char *sql_results = "CREATE TABLE IF NOT EXISTS results("
-                      "id INTEGER PRIMARY KEY,"
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                       "user_id INTEGER,"
                       "room_id INTEGER,"
                       "score INTEGER,"
                       "total_questions INTEGER,"
                       "time_taken INTEGER,"
-                      "completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                      "submit_reason TEXT DEFAULT 'manual' CHECK(submit_reason IN ('manual', 'timeout', 'disconnect')),"
+                      "submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                      "completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,"  // Giữ lại cho backward compatibility
                       "FOREIGN KEY(user_id) REFERENCES users(id));";
 
   const char *sql_activity_log = "CREATE TABLE IF NOT EXISTS activity_log("
@@ -88,63 +90,177 @@ void init_database() {
                             "FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE,"
                             "UNIQUE(user_id, room_id, question_id)"  // Mỗi user chỉ trả lời mỗi câu 1 lần
                             ");";
+  
+  // Practice Mode Tables
+  const char *create_practice_sessions = 
+                            "CREATE TABLE IF NOT EXISTS practice_sessions ("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "user_id INTEGER NOT NULL,"
+                            "start_time TEXT,"
+                            "end_time TEXT,"
+                            "duration_minutes INTEGER DEFAULT 30,"
+                            "score INTEGER DEFAULT 0,"
+                            "submitted INTEGER DEFAULT 0,"
+                            "FOREIGN KEY (user_id) REFERENCES users(id));";
 
+  const char *create_practice_questions = 
+                            "CREATE TABLE IF NOT EXISTS practice_questions ("
+                            "session_id INTEGER,"
+                            "question_id INTEGER,"
+                            "PRIMARY KEY (session_id, question_id),"
+                            "FOREIGN KEY (session_id) REFERENCES practice_sessions(id),"
+                            "FOREIGN KEY (question_id) REFERENCES questions(id));";
+
+  const char *create_practice_answers = 
+                            "CREATE TABLE IF NOT EXISTS practice_answers ("
+                            "session_id INTEGER,"
+                            "question_id INTEGER,"
+                            "user_answer INTEGER,"
+                            "PRIMARY KEY (session_id, question_id),"
+                            "FOREIGN KEY (session_id) REFERENCES practice_sessions(id),"
+                            "FOREIGN KEY (question_id) REFERENCES questions(id));";
+
+  // Execute SQL - Create tables
   sqlite3_exec(db, sql_users, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
   sqlite3_exec(db, sql_results, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
   sqlite3_exec(db, sql_activity_log, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
   sqlite3_exec(db, sql_questions, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
   sqlite3_exec(db, sql_rooms, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
   sqlite3_exec(db, sql_participants, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
   sqlite3_exec(db, sql_user_answers, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
+  sqlite3_exec(db, create_practice_sessions, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
+  sqlite3_exec(db, create_practice_questions, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+  
+  sqlite3_exec(db, create_practice_answers, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
 
-  // Thêm cột max_attempts vào rooms nếu chưa có (0 = unlimited)
+  // ============================================================================
+  // MIGRATION: Add missing columns to existing tables
+  // ============================================================================
+  
+  // Add max_attempts to rooms (0 = unlimited)
   const char *sql_alter_rooms = 
     "ALTER TABLE rooms ADD COLUMN max_attempts INTEGER DEFAULT 0;";
-  
-  // Bỏ qua lỗi nếu cột đã tồn tại
   sqlite3_exec(db, sql_alter_rooms, 0, 0, &err_msg);
-  if (err_msg) {
-    // Cột đã tồn tại hoặc lỗi khác - không quan trọng
-    sqlite3_free(err_msg);
-    err_msg = NULL;
-  }
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
 
-  // Thêm cột role vào users nếu chưa có (default 'user')
+  // Add role to users (default 'user')
   const char *sql_alter_users = 
     "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';";
-  
   sqlite3_exec(db, sql_alter_users, 0, 0, &err_msg);
-  if (err_msg) {
-    sqlite3_free(err_msg);
-    err_msg = NULL;
-  }
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
 
-  // Tạo admin mặc định nếu chưa có (password: admin123)
+  // Add submit_reason to results (cho database cũ)
+  const char *sql_alter_results_reason = 
+    "ALTER TABLE results ADD COLUMN submit_reason TEXT DEFAULT 'manual' "
+    "CHECK(submit_reason IN ('manual', 'timeout', 'disconnect'));";
+  sqlite3_exec(db, sql_alter_results_reason, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Add submitted_at to results (cho database cũ)
+  const char *sql_alter_results_timestamp = 
+    "ALTER TABLE results ADD COLUMN submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP;";
+  sqlite3_exec(db, sql_alter_results_timestamp, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // ============================================================================
+  // CREATE INDEXES for better performance
+  // ============================================================================
+  
+  // Index cho leaderboard query (ORDER BY score DESC, time_taken ASC)
+  const char *idx_results_leaderboard = 
+    "CREATE INDEX IF NOT EXISTS idx_results_room_score "
+    "ON results(room_id, score DESC, time_taken ASC);";
+  sqlite3_exec(db, idx_results_leaderboard, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Index cho double submit check
+  const char *idx_results_user_room = 
+    "CREATE INDEX IF NOT EXISTS idx_results_user_room "
+    "ON results(user_id, room_id);";
+  sqlite3_exec(db, idx_results_user_room, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Index cho user_answers lookup (calculate_score)
+  const char *idx_user_answers_lookup = 
+    "CREATE INDEX IF NOT EXISTS idx_user_answers_lookup "
+    "ON user_answers(user_id, room_id);";
+  sqlite3_exec(db, idx_user_answers_lookup, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Index cho participants lookup (get_start_time)
+  const char *idx_participants_lookup = 
+    "CREATE INDEX IF NOT EXISTS idx_participants_lookup "
+    "ON participants(room_id, user_id);";
+  sqlite3_exec(db, idx_participants_lookup, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Index cho questions lookup (validate_question)
+  const char *idx_questions_room = 
+    "CREATE INDEX IF NOT EXISTS idx_questions_room "
+    "ON questions(room_id, id);";
+  sqlite3_exec(db, idx_questions_room, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // ============================================================================
+  // CREATE DEFAULT ADMIN ACCOUNT
+  // ============================================================================
+  
   // Hash của "admin123" = 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
   const char *sql_create_admin = 
     "INSERT OR IGNORE INTO users (id, username, password, role) "
     "VALUES (1, 'admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin');";
-  
   sqlite3_exec(db, sql_create_admin, 0, 0, &err_msg);
-  if (err_msg) {
-    sqlite3_free(err_msg);
-    err_msg = NULL;
-  }
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
 
+  printf("========================================\n");
   printf("Database initialized successfully\n");
-  printf("Default admin account: username='admin', password='admin123'\n");
+  printf("========================================\n");
+  printf("Default admin account:\n");
+  printf("  Username: admin\n");
+  printf("  Password: admin123\n");
+  printf("========================================\n");
+  printf("Schema updates:\n");
+  printf("  ✓ submit_reason column added\n");
+  printf("  ✓ submitted_at timestamp added\n");
+  printf("  ✓ Performance indexes created\n");
+  printf("========================================\n");
 }
 
 void log_activity(int user_id, const char *action, const char *details) {
-  char query[500];
-  char *err_msg = 0;
-
-  snprintf(query, sizeof(query),
-           "INSERT INTO activity_log (user_id, action, details) VALUES (%d, '%s', '%s');",
-           user_id, action, details);
-
-  if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
-    fprintf(stderr, "SQL error: %s\n", err_msg);
-    sqlite3_free(err_msg);
+  // Sử dụng prepared statement để tránh SQL injection
+  const char *sql = "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?);";
+  
+  sqlite3_stmt *stmt;
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+    fprintf(stderr, "[ERROR] Failed to prepare log_activity: %s\n", sqlite3_errmsg(db));
+    return;
   }
+  
+  sqlite3_bind_int(stmt, 1, user_id);
+  sqlite3_bind_text(stmt, 2, action, -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 3, details, -1, SQLITE_STATIC);
+  
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    fprintf(stderr, "[ERROR] Failed to log activity: %s\n", sqlite3_errmsg(db));
+  }
+  
+  sqlite3_finalize(stmt);
 }

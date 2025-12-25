@@ -13,9 +13,10 @@ static int exam_room_id = 0;
 static int exam_duration = 0;
 static time_t exam_start_time = 0;
 static guint timer_id = 0;
+static int total_questions = 0;
 static GtkWidget *timer_label = NULL;
 static GtkWidget **question_radios = NULL; // Array of radio button groups
-static int total_questions = 0;
+static GtkWidget **question_frames = NULL;
 
 typedef struct {
     int question_id;
@@ -122,7 +123,14 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     
     int question_index = GPOINTER_TO_INT(data);
     int question_id = questions[question_index].question_id;
-    
+
+    /* Highlight question frame when answered */
+    if (question_frames && question_frames[question_index]) {
+        GtkStyleContext *ctx =
+            gtk_widget_get_style_context(question_frames[question_index]);
+        gtk_style_context_add_class(ctx, "question-answered");
+    }
+        
     // Tìm đáp án được chọn (0=A, 1=B, 2=C, 3=D)
     int selected = -1;
     for (int i = 0; i < 4; i++) {
@@ -137,12 +145,12 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     
     // Gửi SAVE_ANSWER đến server
     char msg[128];
-    snprintf(msg, sizeof(msg), "SAVE_ANSWER|%d|%d|%d\n", 
+    snprintf(msg, sizeof(msg), "SAVE_ANSWER|%d|%d|%d+1\n", 
              exam_room_id, question_id, selected);
     send_message(msg);
     
     // Không cần đợi response để UX mượt hơn
-    printf("[DEBUG] Saved answer Q%d = %d\n", question_id, selected);
+    printf("[DEBUG] Saved answer Q%d = %d+1\n", question_id, selected);
 }
 
 // Callback submit bài thi
@@ -230,6 +238,23 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
 
 // Tạo UI exam page
 void create_exam_page(int room_id) {
+    GtkCssProvider *provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider,
+        ".question-answered {"
+        "  background: #E8F8F5;"
+        "  border: 2px solid #2ecc71;"
+        "  border-radius: 8px;"
+        "}"
+        ".question-answered:hover {"
+        "  background: #D1F2EB;"
+        "}",
+        -1, NULL);
+
+    gtk_style_context_add_provider_for_screen(
+        gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
     exam_room_id = room_id;
     
     // Gửi BEGIN_EXAM để load questions
@@ -295,6 +320,7 @@ void create_exam_page(int room_id) {
     // Allocate memory
     questions = malloc(sizeof(Question) * total_questions);
     question_radios = malloc(sizeof(GtkWidget*) * total_questions * 4);
+    question_frames = malloc(sizeof(GtkWidget*) * total_questions);
     
     // Parse lại từ original buffer để lấy questions
     ptr = original_buffer;
@@ -393,6 +419,7 @@ void create_exam_page(int room_id) {
     // Hiển thị từng câu hỏi
     for (int i = 0; i < total_questions; i++) {
         GtkWidget *q_frame = gtk_frame_new(NULL);
+        question_frames[i] = q_frame;
         GtkWidget *q_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
         gtk_widget_set_margin_top(q_vbox, 10);
         gtk_widget_set_margin_bottom(q_vbox, 10);
@@ -412,21 +439,23 @@ void create_exam_page(int room_id) {
         // Radio buttons cho options
         GSList *group = NULL;
         const char *labels[] = {"A", "B", "C", "D"};
-        
+
+        /* Dummy hidden radio to avoid auto-selection */
+        GtkWidget *dummy = gtk_radio_button_new(NULL);
+        group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(dummy));
+
         for (int j = 0; j < 4; j++) {
             char option_text[150];
-            snprintf(option_text, sizeof(option_text), "%s. %s", 
-                    labels[j], questions[i].options[j]);
-            
+            snprintf(option_text, sizeof(option_text),
+                    "%s. %s", labels[j], questions[i].options[j]);
+
             GtkWidget *radio = gtk_radio_button_new_with_label(group, option_text);
             group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
 
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), FALSE);
-            
-            g_signal_connect(radio, "toggled", 
-                           G_CALLBACK(on_answer_selected), 
-                           GINT_TO_POINTER(i));
-            
+            g_signal_connect(radio, "toggled",
+                            G_CALLBACK(on_answer_selected),
+                            GINT_TO_POINTER(i));
+
             gtk_box_pack_start(GTK_BOX(q_vbox), radio, FALSE, FALSE, 0);
             question_radios[i * 4 + j] = radio;
         }
@@ -465,6 +494,11 @@ void cleanup_exam_ui() {
         g_source_remove(timer_id);
         timer_id = 0;
     }
+
+    if (question_frames) {
+    free(question_frames);
+    question_frames = NULL;
+    }
     
     // Remove exam widget from window properly
     GtkWidget *old_child = gtk_bin_get_child(GTK_BIN(main_window));
@@ -490,6 +524,24 @@ void cleanup_exam_ui() {
 
 // Resume exam từ session cũ
 void create_exam_page_from_resume(int room_id, char *resume_data) {
+    GtkCssProvider *provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider,
+        ".question-answered {"
+        "  background: #E8F8F5;"
+        "  border: 2px solid #2ecc71;"
+        "  border-radius: 8px;"
+        "}"
+        ".question-answered:hover {"
+        "  background: #D1F2EB;"
+        "}",
+        -1, NULL);
+
+    gtk_style_context_add_provider_for_screen(
+        gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
+
     exam_room_id = room_id;
     
     printf("[DEBUG] Resume data: %s\n", resume_data);
@@ -644,6 +696,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     // Tạo UI cho từng câu hỏi
     for (int i = 0; i < total_questions; i++) {
         GtkWidget *q_frame = gtk_frame_new(NULL);
+        question_frames[i] = q_frame;
         GtkWidget *q_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         gtk_widget_set_margin_start(q_box, 10);
         gtk_widget_set_margin_end(q_box, 10);
@@ -662,21 +715,34 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
         // Radio buttons cho options
         GSList *group = NULL;
         const char *labels[] = {"A", "B", "C", "D"};
-        
+
+        /* Dummy radio */
+        GtkWidget *dummy = gtk_radio_button_new(NULL);
+        group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(dummy));
+
         for (int j = 0; j < 4; j++) {
             char opt_text[150];
-            snprintf(opt_text, sizeof(opt_text), "%s. %s", labels[j], questions[i].options[j]);
-            
+            snprintf(opt_text, sizeof(opt_text),
+                    "%s. %s", labels[j], questions[i].options[j]);
+
             GtkWidget *radio = gtk_radio_button_new_with_label(group, opt_text);
             group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
-            
-            // Restore saved answer
+
+            /* Restore saved answer */
             if (saved_answers[i] == j) {
                 gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), TRUE);
             }
-            
-            g_signal_connect(radio, "toggled", G_CALLBACK(on_answer_selected), GINT_TO_POINTER(i));
-            
+
+            if (saved_answers[i] >= 0 && question_frames && question_frames[i]) {
+                GtkStyleContext *ctx =
+                    gtk_widget_get_style_context(question_frames[i]);
+                gtk_style_context_add_class(ctx, "question-answered");
+            }
+
+            g_signal_connect(radio, "toggled",
+                            G_CALLBACK(on_answer_selected),
+                            GINT_TO_POINTER(i));
+
             question_radios[i * 4 + j] = radio;
             gtk_box_pack_start(GTK_BOX(q_box), radio, FALSE, FALSE, 0);
         }

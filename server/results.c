@@ -1,9 +1,268 @@
 #include "results.h"
 #include "db.h"
 #include <sys/socket.h>
+#include <time.h>
+#include <string.h>
 
 extern ServerData server_data;
 extern sqlite3 *db;
+
+// ============================================================================
+// HELPER FUNCTIONS - Using Prepared Statements
+// ============================================================================
+
+// Helper: Lấy start_time của user trong room
+static long get_user_start_time(int user_id, int room_id)
+{
+    const char *sql = "SELECT start_time FROM participants WHERE room_id = ? AND user_id = ?";
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "[ERROR] Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        return 0;
+    }
+    
+    sqlite3_bind_int(stmt, 1, room_id);
+    sqlite3_bind_int(stmt, 2, user_id);
+    
+    long start_time = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        start_time = sqlite3_column_int64(stmt, 0);
+    }
+    
+    sqlite3_finalize(stmt);
+    return start_time;
+}
+
+// Helper: Kiểm tra user đã submit chưa
+static int has_user_submitted(int user_id, int room_id)
+{
+    const char *sql = "SELECT id FROM results WHERE room_id = ? AND user_id = ?";
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "[ERROR] Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        return 0;
+    }
+    
+    sqlite3_bind_int(stmt, 1, room_id);
+    sqlite3_bind_int(stmt, 2, user_id);
+    
+    int exists = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    
+    return exists;
+}
+
+// Helper: Lấy duration của room (phút)
+static int get_room_duration(int room_id)
+{
+    const char *sql = "SELECT duration FROM rooms WHERE id = ?";
+    
+    sqlite3_stmt *stmt;
+    int duration = 60; // Default 60 phút
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, room_id);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            duration = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        fprintf(stderr, "[ERROR] Failed to get room duration: %s\n", sqlite3_errmsg(db));
+    }
+    
+    return duration;
+}
+
+// Helper: Tính điểm từ user_answers
+static void calculate_score(int user_id, int room_id, int *score, int *total_questions)
+{
+    // Đếm số câu trả lời đúng
+    const char *sql_score = 
+        "SELECT COUNT(*) FROM user_answers ua "
+        "JOIN questions q ON ua.question_id = q.id "
+        "WHERE ua.user_id = ? AND ua.room_id = ? "
+        "AND ua.selected_answer = q.correct_answer";
+    
+    sqlite3_stmt *stmt;
+    *score = 0;
+    
+    if (sqlite3_prepare_v2(db, sql_score, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, user_id);
+        sqlite3_bind_int(stmt, 2, room_id);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            *score = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+    
+    // Đếm tổng số câu hỏi
+    const char *sql_total = "SELECT COUNT(*) FROM questions WHERE room_id = ?";
+    
+    *total_questions = 0;
+    if (sqlite3_prepare_v2(db, sql_total, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, room_id);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            *total_questions = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+}
+
+// Helper: Lưu kết quả vào database với submit_reason
+static int save_result_to_db(int user_id, int room_id, int score, 
+                             int total_questions, long time_taken, 
+                             const char *submit_reason)
+{
+    const char *sql = 
+        "INSERT INTO results (user_id, room_id, score, total_questions, time_taken, submit_reason, submitted_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)";
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "[ERROR] Failed to prepare insert: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+    
+    sqlite3_bind_int(stmt, 1, user_id);
+    sqlite3_bind_int(stmt, 2, room_id);
+    sqlite3_bind_int(stmt, 3, score);
+    sqlite3_bind_int(stmt, 4, total_questions);
+    sqlite3_bind_int64(stmt, 5, time_taken);
+    sqlite3_bind_text(stmt, 6, submit_reason, -1, SQLITE_STATIC);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "[ERROR] Failed to insert result: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+    
+    return 0;
+}
+
+// Helper: Validate question_id exists in room
+static int validate_question(int room_id, int question_id)
+{
+    const char *sql = "SELECT id FROM questions WHERE room_id = ? AND id = ?";
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return 0;
+    }
+    
+    sqlite3_bind_int(stmt, 1, room_id);
+    sqlite3_bind_int(stmt, 2, question_id);
+    
+    int exists = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    
+    return exists;
+}
+
+// ============================================================================
+// CACHE MANAGEMENT - Score realtime cho leaderboard
+// ============================================================================
+
+typedef struct {
+    int user_id;
+    int room_id;
+    int score;
+    int total_questions;
+    long time_taken;
+    time_t last_update;
+} ScoreCache;
+
+#define MAX_CACHE_ENTRIES 1000
+static ScoreCache score_cache[MAX_CACHE_ENTRIES];
+static int cache_count = 0;
+static pthread_mutex_t cache_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Update cache khi user trả lời câu hỏi
+void update_score_cache(int user_id, int room_id)
+{
+    pthread_mutex_lock(&cache_lock);
+    
+    int score, total_questions;
+    calculate_score(user_id, room_id, &score, &total_questions);
+    
+    long start_time = get_user_start_time(user_id, room_id);
+    long time_taken = (start_time > 0) ? (time(NULL) - start_time) : 0;
+    
+    // Tìm entry trong cache
+    int found = -1;
+    for (int i = 0; i < cache_count; i++) {
+        if (score_cache[i].user_id == user_id && score_cache[i].room_id == room_id) {
+            found = i;
+            break;
+        }
+    }
+    
+    if (found >= 0) {
+        // Update existing entry
+        score_cache[found].score = score;
+        score_cache[found].total_questions = total_questions;
+        score_cache[found].time_taken = time_taken;
+        score_cache[found].last_update = time(NULL);
+    } else if (cache_count < MAX_CACHE_ENTRIES) {
+        // Add new entry
+        score_cache[cache_count].user_id = user_id;
+        score_cache[cache_count].room_id = room_id;
+        score_cache[cache_count].score = score;
+        score_cache[cache_count].total_questions = total_questions;
+        score_cache[cache_count].time_taken = time_taken;
+        score_cache[cache_count].last_update = time(NULL);
+        cache_count++;
+    }
+    
+    pthread_mutex_unlock(&cache_lock);
+}
+
+// Lấy score từ cache (cho leaderboard realtime)
+int get_cached_score(int user_id, int room_id, int *score, int *total_questions)
+{
+    pthread_mutex_lock(&cache_lock);
+    
+    for (int i = 0; i < cache_count; i++) {
+        if (score_cache[i].user_id == user_id && score_cache[i].room_id == room_id) {
+            *score = score_cache[i].score;
+            *total_questions = score_cache[i].total_questions;
+            pthread_mutex_unlock(&cache_lock);
+            return 1; // Found
+        }
+    }
+    
+    pthread_mutex_unlock(&cache_lock);
+    return 0; // Not found
+}
+
+// Xóa cache khi user submit (để tránh stale data)
+void clear_score_cache(int user_id, int room_id)
+{
+    pthread_mutex_lock(&cache_lock);
+    
+    for (int i = 0; i < cache_count; i++) {
+        if (score_cache[i].user_id == user_id && score_cache[i].room_id == room_id) {
+            // Shift array left
+            for (int j = i; j < cache_count - 1; j++) {
+                score_cache[j] = score_cache[j + 1];
+            }
+            cache_count--;
+            break;
+        }
+    }
+    
+    pthread_mutex_unlock(&cache_lock);
+}
+
+// ============================================================================
+// MAIN FUNCTIONS
+// ============================================================================
 
 // Lưu đáp án realtime (INSERT OR REPLACE để update nếu đã tồn tại)
 void save_answer(int socket_fd, int user_id, int room_id, int question_id, int selected_answer)
@@ -17,301 +276,269 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
         return;
     }
     
-    // INSERT OR REPLACE để update nếu user đổi đáp án
-    char *query = sqlite3_mprintf(
-        "INSERT OR REPLACE INTO user_answers (user_id, room_id, question_id, selected_answer, answered_at) "
-        "VALUES (%d, %d, %d, %d, CURRENT_TIMESTAMP)",
-        user_id, room_id, question_id, selected_answer);
-    
-    if (!query) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Memory error\n", 31, 0);
+    // Validate question_id belongs to room
+    if (!validate_question(room_id, question_id)) {
+        send(socket_fd, "SAVE_ANSWER_FAIL|Invalid question\n", 35, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
     
-    char *err_msg = NULL;
-    int rc = sqlite3_exec(db, query, NULL, NULL, &err_msg);
-    sqlite3_free(query);
+    // Chặn nếu đã submit
+    if (has_user_submitted(user_id, room_id)) {
+        send(socket_fd, "SAVE_ANSWER_FAIL|Already submitted\n", 36, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
     
-    if (rc == SQLITE_OK) {
+    // Kiểm tra đã bắt đầu thi chưa
+    long start_time = get_user_start_time(user_id, room_id);
+    if (start_time == 0) {
+        send(socket_fd, "SAVE_ANSWER_FAIL|Not started yet\n", 34, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Kiểm tra timeout
+    int duration = get_room_duration(room_id);
+    long elapsed = time(NULL) - start_time;
+    if (elapsed > duration * 60) {
+        send(socket_fd, "SAVE_ANSWER_FAIL|Time expired\n", 31, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // INSERT OR REPLACE với prepared statement
+    const char *sql = 
+        "INSERT OR REPLACE INTO user_answers (user_id, room_id, question_id, selected_answer, answered_at) "
+        "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)";
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        send(socket_fd, "SAVE_ANSWER_FAIL|Database error\n", 33, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    sqlite3_bind_int(stmt, 1, user_id);
+    sqlite3_bind_int(stmt, 2, room_id);
+    sqlite3_bind_int(stmt, 3, question_id);
+    sqlite3_bind_int(stmt, 4, selected_answer);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    if (rc == SQLITE_DONE) {
         send(socket_fd, "SAVE_ANSWER_OK\n", 15, 0);
+        
+        // Update cache cho leaderboard realtime
+        update_score_cache(user_id, room_id);
+        
         printf("[DEBUG] User %d answered Q%d = %d in room %d\n", 
                user_id, question_id, selected_answer, room_id);
     } else {
         char error[128];
-        snprintf(error, sizeof(error), "SAVE_ANSWER_FAIL|%s\n", 
-                 err_msg ? err_msg : "Database error");
+        snprintf(error, sizeof(error), "SAVE_ANSWER_FAIL|%s\n", sqlite3_errmsg(db));
         send(socket_fd, error, strlen(error), 0);
-        if (err_msg) sqlite3_free(err_msg);
     }
     
     pthread_mutex_unlock(&server_data.lock);
 }
 
-void submit_answer(int socket_fd, int user_id, int room_id, int question_num, int answer)
-{
-  pthread_mutex_lock(&server_data.lock);
-
-  TestRoom *room = &server_data.rooms[room_id];
-
-  int user_idx = -1;
-  for (int i = 0; i < room->participant_count; i++)
-  {
-    if (room->participants[i] == user_id)
-    {
-      user_idx = i;
-      break;
-    }
-  }
-
-  if (user_idx != -1)
-  {
-    room->answers[user_idx][question_num].user_id = user_id;
-    room->answers[user_idx][question_num].answer = answer;
-    room->answers[user_idx][question_num].submit_time = time(NULL);
-
-    char response[] = "SUBMIT_ANSWER_OK\n";
-    send(socket_fd, response, strlen(response), 0);
-  }
-
-  pthread_mutex_unlock(&server_data.lock);
-}
-
+// Submit test (manual) - với chặn double submit
 void submit_test(int socket_fd, int user_id, int room_id)
 {
-  pthread_mutex_lock(&server_data.lock);
-
-  // Kiểm tra user đã bắt đầu thi chưa
-  char check_query[256];
-  snprintf(check_query, sizeof(check_query),
-           "SELECT start_time FROM participants WHERE room_id = %d AND user_id = %d",
-           room_id, user_id);
-  
-  sqlite3_stmt *stmt;
-  if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-      send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n", 33, 0);
-      pthread_mutex_unlock(&server_data.lock);
-      return;
-  }
-  
-  long start_time = 0;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-      start_time = sqlite3_column_int64(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-  
-  if (start_time == 0) {
-      send(socket_fd, "SUBMIT_TEST_FAIL|Not started yet\n", 34, 0);
-      pthread_mutex_unlock(&server_data.lock);
-      return;
-  }
-  
-  // Kiểm tra timeout
-  time_t now = time(NULL);
-  long elapsed = now - start_time;
-  
-  // Lấy duration của room
-  char duration_query[256];
-  snprintf(duration_query, sizeof(duration_query),
-           "SELECT duration FROM rooms WHERE id = %d", room_id);
-  
-  int duration_minutes = 60;
-  if (sqlite3_prepare_v2(db, duration_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          duration_minutes = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  long max_time = duration_minutes * 60;
-  if (elapsed > max_time) {
-      elapsed = max_time; // Cap ở max time
-  }
-  
-  // Tính điểm: JOIN user_answers với questions để check correct_answer
-  char score_query[512];
-  snprintf(score_query, sizeof(score_query),
-           "SELECT COUNT(*) FROM user_answers ua "
-           "JOIN questions q ON ua.question_id = q.id "
-           "WHERE ua.user_id = %d AND ua.room_id = %d "
-           "AND ua.selected_answer = q.correct_answer",
-           user_id, room_id);
-  
-  int score = 0;
-  if (sqlite3_prepare_v2(db, score_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          score = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  // Đếm tổng số câu hỏi
-  char count_query[256];
-  snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
-  
-  int total_questions = 0;
-  if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          total_questions = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  // Lưu kết quả vào results table
-  char *insert_query = sqlite3_mprintf(
-      "INSERT INTO results (user_id, room_id, score, total_questions, time_taken) "
-      "VALUES (%d, %d, %d, %d, %ld)",
-      user_id, room_id, score, total_questions, elapsed);
-  
-  char *err_msg = NULL;
-  sqlite3_exec(db, insert_query, NULL, NULL, &err_msg);
-  sqlite3_free(insert_query);
-  
-  if (err_msg) {
-      sqlite3_free(err_msg);
-  }
-
-  char response[200];
-  snprintf(response, sizeof(response), "SUBMIT_TEST_OK|%d|%d|%ld\n", 
-           score, total_questions, elapsed/60);
-  send(socket_fd, response, strlen(response), 0);
-
-  log_activity(user_id, "SUBMIT_TEST", "Test submitted");
-  printf("[INFO] User %d submitted test - Score: %d/%d\n", user_id, score, total_questions);
-  
-  pthread_mutex_unlock(&server_data.lock);
+    pthread_mutex_lock(&server_data.lock);
+    
+    // CHẶN DOUBLE SUBMIT - Kiểm tra đầu tiên
+    if (has_user_submitted(user_id, room_id)) {
+        send(socket_fd, "SUBMIT_TEST_FAIL|Already submitted\n", 36, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Kiểm tra user đã bắt đầu thi chưa
+    long start_time = get_user_start_time(user_id, room_id);
+    if (start_time == 0) {
+        send(socket_fd, "SUBMIT_TEST_FAIL|Not started yet\n", 34, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Tính thời gian và cap ở max duration
+    time_t now = time(NULL);
+    long elapsed = now - start_time;
+    int duration = get_room_duration(room_id);
+    long max_time = duration * 60;
+    
+    if (elapsed > max_time) {
+        elapsed = max_time; // Cap ở max time
+    }
+    
+    // Tính điểm
+    int score, total_questions;
+    calculate_score(user_id, room_id, &score, &total_questions);
+    
+    // Lưu kết quả với submit_reason = "manual"
+    if (save_result_to_db(user_id, room_id, score, total_questions, 
+                          elapsed, "manual") != 0) {
+        send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n", 33, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Xóa cache sau khi submit
+    clear_score_cache(user_id, room_id);
+    
+    // Response
+    char response[200];
+    snprintf(response, sizeof(response), "SUBMIT_TEST_OK|%d|%d|%ld\n", 
+             score, total_questions, elapsed / 60);
+    send(socket_fd, response, strlen(response), 0);
+    
+    log_activity(user_id, "SUBMIT_TEST", "Test submitted manually");
+    printf("[INFO] User %d submitted test (manual) - Score: %d/%d, Time: %ld min\n", 
+           user_id, score, total_questions, elapsed / 60);
+    
+    pthread_mutex_unlock(&server_data.lock);
 }
 
-void view_results(int socket_fd, int room_id)
+// Auto-submit khi timeout
+void auto_submit_on_timeout(int user_id, int room_id)
 {
-  pthread_mutex_lock(&server_data.lock);
-
-  TestRoom *room = &server_data.rooms[room_id];
-  char response[2048];
-  strcpy(response, "VIEW_RESULTS|");
-
-  for (int i = 0; i < room->participant_count; i++)
-  {
-    char result_info[200];
-    snprintf(result_info, sizeof(result_info), "User %d: %d/%d|",
-             room->participants[i], room->scores[i], room->num_questions);
-    strcat(response, result_info);
-  }
-
-  strcat(response, "\n");
-  send(socket_fd, response, strlen(response), 0);
-  pthread_mutex_unlock(&server_data.lock);
+    pthread_mutex_lock(&server_data.lock);
+    
+    printf("[INFO] Auto-submit (timeout) for user %d in room %d\n", user_id, room_id);
+    
+    // CHẶN DOUBLE SUBMIT
+    if (has_user_submitted(user_id, room_id)) {
+        printf("[DEBUG] User %d already submitted, skipping auto-submit\n", user_id);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    long start_time = get_user_start_time(user_id, room_id);
+    if (start_time == 0) {
+        pthread_mutex_unlock(&server_data.lock);
+        return; // Chưa bắt đầu thi
+    }
+    
+    // Tính thời gian = duration (vì timeout)
+    int duration = get_room_duration(room_id);
+    long time_taken = duration * 60;
+    
+    // Tính điểm
+    int score, total_questions;
+    calculate_score(user_id, room_id, &score, &total_questions);
+    
+    // Lưu kết quả với submit_reason = "timeout"
+    save_result_to_db(user_id, room_id, score, total_questions, 
+                     time_taken, "timeout");
+    
+    // Xóa cache
+    clear_score_cache(user_id, room_id);
+    
+    log_activity(user_id, "AUTO_SUBMIT_TIMEOUT", "Test auto-submitted on timeout");
+    printf("[INFO] Auto-submitted (timeout) for user %d - Score: %d/%d\n", 
+           user_id, score, total_questions);
+    
+    pthread_mutex_unlock(&server_data.lock);
 }
 
-// Auto-submit khi user disconnect (được gọi từ handle_client khi detect disconnect)
+// Auto-submit khi user disconnect
 void auto_submit_on_disconnect(int user_id, int room_id)
 {
-  pthread_mutex_lock(&server_data.lock);
-  
-  printf("[INFO] Auto-submit for user %d in room %d (disconnect detected)\n", user_id, room_id);
-  
-  // Kiểm tra user đã bắt đầu thi chưa
-  char check_query[256];
-  snprintf(check_query, sizeof(check_query),
-           "SELECT start_time FROM participants WHERE room_id = %d AND user_id = %d",
-           room_id, user_id);
-  
-  sqlite3_stmt *stmt;
-  if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-      pthread_mutex_unlock(&server_data.lock);
-      return;
-  }
-  
-  long start_time = 0;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-      start_time = sqlite3_column_int64(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-  
-  if (start_time == 0) {
-      pthread_mutex_unlock(&server_data.lock);
-      return; // Chưa bắt đầu thi
-  }
-  
-  // Kiểm tra đã submit chưa
-  char check_result[256];
-  snprintf(check_result, sizeof(check_result),
-           "SELECT id FROM results WHERE room_id = %d AND user_id = %d",
-           room_id, user_id);
-  
-  if (sqlite3_prepare_v2(db, check_result, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          sqlite3_finalize(stmt);
-          pthread_mutex_unlock(&server_data.lock);
-          return; // Đã submit rồi
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  // Tính điểm từ câu trả lời đã lưu
-  time_t now = time(NULL);
-  long elapsed = now - start_time;
-  
-  // Lấy duration
-  char duration_query[256];
-  snprintf(duration_query, sizeof(duration_query),
-           "SELECT duration FROM rooms WHERE id = %d", room_id);
-  
-  int duration_minutes = 60;
-  if (sqlite3_prepare_v2(db, duration_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          duration_minutes = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  // Tính điểm
-  char score_query[512];
-  snprintf(score_query, sizeof(score_query),
-           "SELECT COUNT(*) FROM user_answers ua "
-           "JOIN questions q ON ua.question_id = q.id "
-           "WHERE ua.user_id = %d AND ua.room_id = %d "
-           "AND ua.selected_answer = q.correct_answer",
-           user_id, room_id);
-  
-  int score = 0;
-  if (sqlite3_prepare_v2(db, score_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          score = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  // Đếm tổng câu hỏi
-  char count_query[256];
-  snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
-  
-  int total_questions = 0;
-  if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          total_questions = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
-  // Lưu kết quả
-  char *insert_query = sqlite3_mprintf(
-      "INSERT INTO results (user_id, room_id, score, total_questions, time_taken) "
-      "VALUES (%d, %d, %d, %d, %ld)",
-      user_id, room_id, score, total_questions, elapsed);
-  
-  char *err_msg = NULL;
-  sqlite3_exec(db, insert_query, NULL, NULL, &err_msg);
-  sqlite3_free(insert_query);
-  
-  if (err_msg) {
-      sqlite3_free(err_msg);
-  }
-  
-  log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
-  printf("[INFO] Auto-submitted for user %d - Score: %d/%d\n", user_id, score, total_questions);
-  
-  pthread_mutex_unlock(&server_data.lock);
+    pthread_mutex_lock(&server_data.lock);
+    
+    printf("[INFO] Auto-submit (disconnect) for user %d in room %d\n", user_id, room_id);
+    
+    // CHẶN DOUBLE SUBMIT
+    if (has_user_submitted(user_id, room_id)) {
+        printf("[DEBUG] User %d already submitted, skipping auto-submit\n", user_id);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    long start_time = get_user_start_time(user_id, room_id);
+    if (start_time == 0) {
+        pthread_mutex_unlock(&server_data.lock);
+        return; // Chưa bắt đầu thi
+    }
+    
+    // Tính thời gian thực tế
+    time_t now = time(NULL);
+    long elapsed = now - start_time;
+    int duration = get_room_duration(room_id);
+    long max_time = duration * 60;
+    
+    if (elapsed > max_time) {
+        elapsed = max_time;
+    }
+    
+    // Tính điểm
+    int score, total_questions;
+    calculate_score(user_id, room_id, &score, &total_questions);
+    
+    // Lưu kết quả với submit_reason = "disconnect"
+    save_result_to_db(user_id, room_id, score, total_questions, 
+                     elapsed, "disconnect");
+    
+    // Xóa cache
+    clear_score_cache(user_id, room_id);
+    
+    log_activity(user_id, "AUTO_SUBMIT_DISCONNECT", "Test auto-submitted on disconnect");
+    printf("[INFO] Auto-submitted (disconnect) for user %d - Score: %d/%d\n", 
+           user_id, score, total_questions);
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+// View results (có thể dùng cache hoặc DB)
+void view_results(int socket_fd, int room_id)
+{
+    pthread_mutex_lock(&server_data.lock);
+    
+    char response[4096] = "VIEW_RESULTS|";
+    
+    // Query từ database với prepared statement
+    const char *sql = 
+        "SELECT r.user_id, u.username, r.score, r.total_questions, r.time_taken, r.submit_reason "
+        "FROM results r "
+        "JOIN users u ON r.user_id = u.id "
+        "WHERE r.room_id = ? "
+        "ORDER BY r.score DESC, r.time_taken ASC";
+    
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, room_id);
+        
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            int user_id = sqlite3_column_int(stmt, 0);
+            const char *username = (const char *)sqlite3_column_text(stmt, 1);
+            int score = sqlite3_column_int(stmt, 2);
+            int total = sqlite3_column_int(stmt, 3);
+            long time_taken = sqlite3_column_int64(stmt, 4);
+            const char *reason = (const char *)sqlite3_column_text(stmt, 5);
+            
+            char line[256];
+            snprintf(line, sizeof(line), "%s:%d/%d (%ldm,%s)|",
+                     username ? username : "Unknown",
+                     score, total, time_taken / 60, reason ? reason : "unknown");
+            strcat(response, line);
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        fprintf(stderr, "[ERROR] Failed to query results: %s\n", sqlite3_errmsg(db));
+    }
+    
+    strcat(response, "\n");
+    send(socket_fd, response, strlen(response), 0);
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+// Legacy function - giữ lại để backward compatible
+void submit_answer(int socket_fd, int user_id, int room_id, int question_num, int answer)
+{
+    // Redirect to save_answer với question_id = question_num
+    save_answer(socket_fd, user_id, room_id, question_num, answer);
 }

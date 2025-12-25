@@ -6,6 +6,7 @@
 #include "stats.h"
 #include "admin.h"
 #include "timer.h"
+#include "practice.h"
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -17,20 +18,19 @@ void *handle_client(void *arg)
   int socket_fd = *(int *)arg;
   char buffer[BUFFER_SIZE];
   int user_id = -1;
-  int current_room_id = -1; // Track room user đang thi
+  int current_room_id = -1;
 
   while (1)
   {
     memset(buffer, 0, BUFFER_SIZE);
     int n = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
 
-    if (n <= 0) {
-      // Detect disconnect - KHÔNG auto submit để user có thể resume sau
-      // Session được lưu trong database (participants + user_answers)
-      if (user_id > 0 && current_room_id > 0) {
+    if (n <= 0)
+    {
+      if (user_id > 0 && current_room_id > 0)
+      {
         printf("[DISCONNECT] User %d disconnected from room %d (session preserved for resume)\n", 
                user_id, current_room_id);
-        // auto_submit_on_disconnect(user_id, current_room_id); // DISABLED - allow resume
       }
       break;
     }
@@ -49,6 +49,7 @@ void *handle_client(void *arg)
     if (cmd == NULL)
       continue;
 
+    // Authentication
     if (strcmp(cmd, "REGISTER") == 0)
     {
       char *username = strtok(NULL, "|");
@@ -61,6 +62,7 @@ void *handle_client(void *arg)
       char *password = strtok(NULL, "|");
       login_user(socket_fd, username, password, &user_id);
     }
+    // Room Management
     else if (strcmp(cmd, "LIST_ROOMS") == 0)
     {
       list_test_rooms(socket_fd);
@@ -70,7 +72,6 @@ void *handle_client(void *arg)
       char *room_name = strtok(NULL, "|");
       char *time_str = strtok(NULL, "|");
       int time_limit = time_str ? atoi(time_str) : 30;
-      // num_q removed - questions will be added later via ADD_QUESTION
       create_test_room(socket_fd, user_id, room_name, 0, time_limit);
     }
     else if (strcmp(cmd, "JOIN_ROOM") == 0)
@@ -93,38 +94,29 @@ void *handle_client(void *arg)
       int room_id = atoi(strtok(NULL, "|"));
       start_test(socket_fd, user_id, room_id);
     }
-    else if (strcmp(cmd, "BEGIN_EXAM") == 0)
-    {
-      int room_id = atoi(strtok(NULL, "|"));
-      current_room_id = room_id; // Track room
-      handle_begin_exam(socket_fd, user_id, room_id);
-    }
-    else if (strcmp(cmd, "RESUME_EXAM") == 0)
-    {
-      int room_id = atoi(strtok(NULL, "|"));
-      current_room_id = room_id; // Track room
-      handle_resume_exam(socket_fd, user_id, room_id);
-    }
     else if (strcmp(cmd, "CLOSE_ROOM") == 0)
     {
       int room_id = atoi(strtok(NULL, "|"));
       close_room(socket_fd, user_id, room_id);
     }
-    // else if (strcmp(cmd, "GET_QUESTION") == 0)
-    // {
-    //   int room_id = atoi(strtok(NULL, "|"));
-    //   int q_num = atoi(strtok(NULL, "|"));
-    //   get_question(socket_fd, room_id, q_num);
-    // }
-    else if (strstr(buffer, "GET_USER_ROOMS")) 
+    else if (strstr(buffer, "GET_USER_ROOMS"))
     {
-      char *user_id_str = buffer + 15; // skip "GET_USER_ROOMS|"
-      int user_id = atoi(user_id_str);
-      handle_get_user_rooms(socket_fd, user_id);
+      char *user_id_str = buffer + 15;
+      int target_user_id = atoi(user_id_str);
+      handle_get_user_rooms(socket_fd, target_user_id);
     }
-    else if (strstr(buffer, "ADD_QUESTION")) {
-    char *data = buffer + 13; // skip "ADD_QUESTION|"
-    handle_add_question(socket_fd, data);
+    // Exam
+    else if (strcmp(cmd, "BEGIN_EXAM") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      current_room_id = room_id;
+      handle_begin_exam(socket_fd, user_id, room_id);
+    }
+    else if (strcmp(cmd, "RESUME_EXAM") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      current_room_id = room_id;
+      handle_resume_exam(socket_fd, user_id, room_id);
     }
     else if (strcmp(cmd, "SAVE_ANSWER") == 0)
     {
@@ -144,20 +136,35 @@ void *handle_client(void *arg)
     {
       int room_id = atoi(strtok(NULL, "|"));
       submit_test(socket_fd, user_id, room_id);
-      current_room_id = -1; // Clear room sau khi submit
+      current_room_id = -1;
     }
     else if (strcmp(cmd, "VIEW_RESULTS") == 0)
     {
       int room_id = atoi(strtok(NULL, "|"));
       view_results(socket_fd, room_id);
     }
-    // else if (strcmp(cmd, "PRACTICE_MODE") == 0)
-    // {
-    //   char *difficulty = strtok(NULL, "|");
-    //   char *category = strtok(NULL, "|");
-    //   int num_q = atoi(strtok(NULL, "|"));
-    //   practice_mode(socket_fd, user_id, difficulty, category, num_q);
-    // }
+    // Questions
+    else if (strstr(buffer, "ADD_QUESTION"))
+    {
+      char *data = buffer + 13;
+      handle_add_question(socket_fd, data);
+    }
+    // Practice Mode
+    else if (strcmp(cmd, "BEGIN_PRACTICE") == 0)
+    {
+      handle_begin_practice(socket_fd, user_id);
+    }
+    else if (strcmp(cmd, "SAVE_PRACTICE_ANSWER") == 0)
+    {
+      int question_id = atoi(strtok(NULL, "|"));
+      int answer = atoi(strtok(NULL, "|"));
+      save_practice_answer(socket_fd, user_id, question_id, answer);
+    }
+    else if (strcmp(cmd, "SUBMIT_PRACTICE") == 0)
+    {
+      submit_practice(socket_fd, user_id);
+    }
+    // Statistics
     else if (strcmp(cmd, "LEADERBOARD") == 0)
     {
       int limit = 10;
@@ -182,9 +189,10 @@ void *handle_client(void *arg)
     {
       get_difficulty_stats(socket_fd, user_id);
     }
+    // Admin
     else if (strcmp(cmd, "IMPORT_CSV") == 0)
     {
-      char *data = buffer + 11; // skip "IMPORT_CSV|"
+      char *data = buffer + 11;
       handle_import_csv(socket_fd, data);
     }
     else if (strcmp(cmd, "ADMIN_DASHBOARD") == 0)
@@ -213,6 +221,7 @@ void *handle_client(void *arg)
       int q_id = atoi(strtok(NULL, "|"));
       delete_question(socket_fd, user_id, q_id);
     }
+    // Timer
     else if (strcmp(cmd, "CHECK_TIMERS") == 0)
     {
       check_room_timeouts();

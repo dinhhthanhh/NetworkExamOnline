@@ -53,7 +53,7 @@ typedef struct
 {
   int user_id;
   char username[50];
-  char password[50];
+  char password[65];
   int is_online;
   int socket_fd;
   char difficulty_filter[20];

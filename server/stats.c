@@ -1,201 +1,290 @@
 #include "stats.h"
 #include "db.h"
 #include <sys/socket.h>
+#include <string.h>
+#include <stdio.h>
 
-extern ServerData server_data;
+#define RESP_BIG   8192
+#define RESP_MED   4096
+#define RESP_SMALL 256
+
+#define SAFE_TEXT(x) ((x) ? (const char *)(x) : "N/A")
+
 extern sqlite3 *db;
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+static void send_response_safe(int socket_fd, const char *response)
+{
+    if (response && *response)
+        send(socket_fd, response, strlen(response), 0);
+}
+
+static int append_safe(char *dest, size_t max, const char *src)
+{
+    size_t cur = strlen(dest);
+    size_t add = strlen(src);
+
+    if (cur + add + 1 >= max)
+        return -1;
+
+    strcat(dest, src);
+    return 0;
+}
+
+/* =========================================================
+   GLOBAL LEADERBOARD
+   ========================================================= */
 
 void get_leaderboard(int socket_fd, int limit)
 {
-  char query[500];
-  sqlite3_stmt *stmt;
+    if (limit <= 0 || limit > 100) limit = 10;
 
-  snprintf(query, sizeof(query),
-           "SELECT u.id, u.username, COALESCE(SUM(r.score), 0) as total_score, COUNT(r.id) as tests_completed "
-           "FROM users u LEFT JOIN results r ON u.id = r.user_id "
-           "GROUP BY u.id ORDER BY total_score DESC LIMIT %d;",
-           limit);
+    const char *sql =
+        "SELECT u.username, "
+        "COALESCE(SUM(r.score),0), "
+        "COUNT(r.id) "
+        "FROM users u "
+        "LEFT JOIN results r ON u.id = r.user_id "
+        "GROUP BY u.id "
+        "ORDER BY 2 DESC, 3 DESC "
+        "LIMIT ?;";
 
-  pthread_mutex_lock(&server_data.lock);
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "DB error: %s\n", sqlite3_errmsg(db));
+        send(socket_fd, "LEADERBOARD_FAIL\n", 17, 0);
+        return;
+    }
 
-  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
-  {
-    char response[4096];
-    strcpy(response, "LEADERBOARD|");
+    sqlite3_bind_int(stmt, 1, limit);
 
+    char response[RESP_BIG] = "LEADERBOARD|";
     int rank = 1;
-    while (sqlite3_step(stmt) == SQLITE_ROW)
-    {
-      int user_id = sqlite3_column_int(stmt, 0);
-      const char *username = (const char *)sqlite3_column_text(stmt, 1);
-      int total_score = sqlite3_column_int(stmt, 2);
-      int tests_completed = sqlite3_column_int(stmt, 3);
 
-      char entry[300];
-      snprintf(entry, sizeof(entry), "#%d|%s|Score:%d|Tests:%d|",
-               rank, username, total_score, tests_completed);
-      strcat(response, entry);
-      rank++;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        char entry[RESP_SMALL];
+        snprintf(entry, sizeof(entry),
+            "#%d|%s|%d|%d|",
+            rank++,
+            SAFE_TEXT(sqlite3_column_text(stmt, 0)),
+            sqlite3_column_int(stmt, 1),
+            sqlite3_column_int(stmt, 2));
+
+        if (append_safe(response, sizeof(response), entry) != 0)
+            break;
     }
 
-    strcat(response, "\n");
-    send(socket_fd, response, strlen(response), 0);
-  }
-
-  sqlite3_finalize(stmt);
-  pthread_mutex_unlock(&server_data.lock);
-}
-
-void get_user_statistics(int socket_fd, int user_id)
-{
-  char query[500];
-  sqlite3_stmt *stmt;
-
-  snprintf(query, sizeof(query),
-           "SELECT COUNT(id) as total_tests, AVG(CAST(score AS FLOAT)/total_questions) as avg_score, "
-           "MAX(score) as max_score, SUM(score) as total_score "
-           "FROM results WHERE user_id = %d;",
-           user_id);
-
-  pthread_mutex_lock(&server_data.lock);
-
-  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
-  {
-    if (sqlite3_step(stmt) == SQLITE_ROW)
-    {
-      int total_tests = sqlite3_column_int(stmt, 0);
-      double avg_score = sqlite3_column_double(stmt, 1);
-      int max_score = sqlite3_column_int(stmt, 2);
-      int total_score = sqlite3_column_int(stmt, 3);
-
-      char response[300];
-      snprintf(response, sizeof(response),
-               "USER_STATS|Tests:%d|AvgScore:%.2f%%|MaxScore:%d|TotalScore:%d\n",
-               total_tests, avg_score * 100, max_score, total_score);
-      send(socket_fd, response, strlen(response), 0);
-    }
-  }
-
-  sqlite3_finalize(stmt);
-  pthread_mutex_unlock(&server_data.lock);
-}
-
-void get_category_stats(int socket_fd, int user_id)
-{
-  char query[800];
-  sqlite3_stmt *stmt;
-
-  snprintf(query, sizeof(query),
-           "SELECT q.category, COUNT(DISTINCT r.id) as tests, "
-           "SUM(CASE WHEN r.score > 0 THEN 1 ELSE 0 END) as passed "
-           "FROM results r JOIN questions q ON r.room_id = q.id "
-           "WHERE r.user_id = %d GROUP BY q.category;",
-           user_id);
-
-  pthread_mutex_lock(&server_data.lock);
-
-  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
-  {
-    char response[2048];
-    strcpy(response, "CATEGORY_STATS|");
-
-    while (sqlite3_step(stmt) == SQLITE_ROW)
-    {
-      const char *category = (const char *)sqlite3_column_text(stmt, 0);
-      int tests = sqlite3_column_int(stmt, 1);
-      int passed = sqlite3_column_int(stmt, 2);
-
-      char entry[200];
-      snprintf(entry, sizeof(entry), "%s:%d/%d|", category, passed, tests);
-      strcat(response, entry);
-    }
-
-    strcat(response, "\n");
-    send(socket_fd, response, strlen(response), 0);
-  }
-
-  sqlite3_finalize(stmt);
-  pthread_mutex_unlock(&server_data.lock);
-}
-
-void get_difficulty_stats(int socket_fd, int user_id)
-{
-  char query[800];
-  sqlite3_stmt *stmt;
-
-  snprintf(query, sizeof(query),
-           "SELECT q.difficulty, COUNT(DISTINCT r.id) as tests, "
-           "AVG(CAST(r.score AS FLOAT)/r.total_questions) as pass_rate "
-           "FROM results r JOIN questions q ON r.room_id = q.id "
-           "WHERE r.user_id = %d GROUP BY q.difficulty;",
-           user_id);
-
-  pthread_mutex_lock(&server_data.lock);
-
-  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
-  {
-    char response[2048];
-    strcpy(response, "DIFFICULTY_STATS|");
-
-    while (sqlite3_step(stmt) == SQLITE_ROW)
-    {
-      const char *difficulty = (const char *)sqlite3_column_text(stmt, 0);
-      int tests = sqlite3_column_int(stmt, 1);
-      double pass_rate = sqlite3_column_double(stmt, 2);
-
-      char entry[200];
-      snprintf(entry, sizeof(entry), "%s:%d:%.1f%%|", difficulty, tests, pass_rate * 100);
-      strcat(response, entry);
-    }
-
-    strcat(response, "\n");
-    send(socket_fd, response, strlen(response), 0);
-  }
-
-  sqlite3_finalize(stmt);
-  pthread_mutex_unlock(&server_data.lock);
+    append_safe(response, sizeof(response), "\n");
+    send_response_safe(socket_fd, response);
+    sqlite3_finalize(stmt);
 }
 
 void get_user_test_history(int socket_fd, int user_id)
 {
-  char query[800];
-  sqlite3_stmt *stmt;
+    const char *sql =
+        "SELECT r.room_id, r.score, r.total_questions, r.time_taken "
+        "FROM results r "
+        "WHERE r.user_id=? "
+        "ORDER BY r.created_at DESC "
+        "LIMIT 20;";
 
-  snprintf(query, sizeof(query),
-           "SELECT r.id, rm.name, r.score, r.total_questions, "
-           "r.time_taken, datetime(r.completed_at, 'localtime') "
-           "FROM results r "
-           "JOIN rooms rm ON r.room_id = rm.id "
-           "WHERE r.user_id = %d "
-           "ORDER BY r.completed_at DESC LIMIT 20;",
-           user_id);
-
-  pthread_mutex_lock(&server_data.lock);
-
-  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
-  {
-    char response[8192];
-    strcpy(response, "TEST_HISTORY|");
-
-    while (sqlite3_step(stmt) == SQLITE_ROW)
-    {
-      int result_id = sqlite3_column_int(stmt, 0);
-      const char *room_name = (const char *)sqlite3_column_text(stmt, 1);
-      int score = sqlite3_column_int(stmt, 2);
-      int total = sqlite3_column_int(stmt, 3);
-      int time_taken = sqlite3_column_int(stmt, 4);
-      const char *completed = (const char *)sqlite3_column_text(stmt, 5);
-
-      char entry[400];
-      snprintf(entry, sizeof(entry), "%d|%s|%d|%d|%d|%s|",
-               result_id, room_name, score, total, time_taken, completed ? completed : "N/A");
-      strcat(response, entry);
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        send(socket_fd, "TEST_HISTORY_FAIL\n", 18, 0);
+        return;
     }
 
-    strcat(response, "\n");
-    send(socket_fd, response, strlen(response), 0);
-  }
+    sqlite3_bind_int(stmt, 1, user_id);
 
-  sqlite3_finalize(stmt);
-  pthread_mutex_unlock(&server_data.lock);
+    char response[4096] = "TEST_HISTORY|";
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        char entry[256];
+        snprintf(entry, sizeof(entry),
+            "%d|%d/%d|%lldm|",
+            sqlite3_column_int(stmt, 0),
+            sqlite3_column_int(stmt, 1),
+            sqlite3_column_int(stmt, 2),
+            (long long)(sqlite3_column_int64(stmt, 3) / 60));
+
+        if (append_safe(response, sizeof(response), entry) != 0)
+            break;
+    }
+
+    append_safe(response, sizeof(response), "\n");
+    send_response_safe(socket_fd, response);
+    sqlite3_finalize(stmt);
+}
+
+
+/* =========================================================
+   ROOM LEADERBOARD
+   ========================================================= */
+
+void get_room_leaderboard(int socket_fd, int room_id, int limit)
+{
+    if (limit <= 0 || limit > 100) limit = 20;
+
+    const char *sql =
+        "SELECT u.username, r.score, r.total_questions, "
+        "r.time_taken, r.submit_reason "
+        "FROM results r "
+        "JOIN users u ON r.user_id = u.id "
+        "WHERE r.room_id = ? "
+        "ORDER BY r.score DESC, r.time_taken ASC "
+        "LIMIT ?;";
+
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        send(socket_fd, "ROOM_LEADERBOARD_FAIL\n", 22, 0);
+        return;
+    }
+
+    sqlite3_bind_int(stmt, 1, room_id);
+    sqlite3_bind_int(stmt, 2, limit);
+
+    char response[8192];
+    snprintf(response, sizeof(response),
+             "ROOM_LEADERBOARD|%d|", room_id);
+
+    int rank = 1;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        char entry[256];
+        snprintf(entry, sizeof(entry),
+                 "#%d|%s|%d/%d|%lldm|%s|",
+                 rank++,
+                 sqlite3_column_text(stmt, 0),
+                 sqlite3_column_int(stmt, 1),
+                 sqlite3_column_int(stmt, 2),
+                 (long long)(sqlite3_column_int64(stmt, 3) / 60),
+                 sqlite3_column_text(stmt, 4));
+
+        if (append_safe(response, sizeof(response), entry) != 0)
+            break;
+    }
+
+    append_safe(response, sizeof(response), "\n");
+    send_response_safe(socket_fd, response);
+    sqlite3_finalize(stmt);
+}
+
+/* =========================================================
+   USER STATISTICS
+   ========================================================= */
+
+void get_user_statistics(int socket_fd, int user_id)
+{
+    const char *sql =
+        "SELECT COUNT(*), "
+        "CASE WHEN SUM(total_questions)=0 THEN 0 "
+        "ELSE AVG(score * 1.0 / total_questions) END, "
+        "MAX(score), SUM(score), SUM(time_taken) "
+        "FROM results WHERE user_id=?;";
+
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
+        return;
+
+    sqlite3_bind_int(stmt, 1, user_id);
+
+    char response[RESP_SMALL];
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        snprintf(response, sizeof(response),
+            "USER_STATS|%d|%.2f|%d|%d|%lldm\n",
+            sqlite3_column_int(stmt, 0),
+            sqlite3_column_double(stmt, 1) * 100,
+            sqlite3_column_int(stmt, 2),
+            sqlite3_column_int(stmt, 3),
+            (long long)(sqlite3_column_int64(stmt, 4) / 60)
+          ); // sec → min
+    } else {
+        strcpy(response, "USER_STATS|0|0|0|0|0m\n");
+    }
+
+    send_response_safe(socket_fd, response);
+    sqlite3_finalize(stmt);
+}
+
+/* =========================================================
+   CATEGORY & DIFFICULTY (ACCURACY BY QUESTION)
+   ========================================================= */
+
+void get_category_stats(int socket_fd, int user_id)
+{
+    const char *sql =
+      "SELECT q.category, "
+      "COUNT(DISTINCT r.room_id), "
+      "CASE WHEN COUNT(ua.id)=0 THEN 0 "
+      "ELSE SUM(ua.selected_answer = q.correct_answer) * 1.0 / COUNT(ua.id) END "
+      "FROM results r "
+      "JOIN user_answers ua ON r.user_id=ua.user_id AND r.room_id=ua.room_id "
+      "JOIN questions q ON ua.question_id=q.id "
+      "WHERE r.user_id=? "
+      "GROUP BY q.category;";
+
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    sqlite3_bind_int(stmt, 1, user_id);
+
+    char response[4096] = "CATEGORY_STATS|";
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        char entry[256];
+        snprintf(entry, sizeof(entry),
+                 "%s|%d|%.1f%%|",
+                 sqlite3_column_text(stmt, 0),
+                 sqlite3_column_int(stmt, 1),
+                 sqlite3_column_double(stmt, 2) * 100);
+        if (append_safe(response, sizeof(response), entry) != 0)
+            break;
+    }
+
+    append_safe(response, sizeof(response), "\n");
+    send_response_safe(socket_fd, response);
+    sqlite3_finalize(stmt);
+}
+
+void get_difficulty_stats(int socket_fd, int user_id)
+{
+    const char *sql =
+        "SELECT q.difficulty, "
+        "COUNT(DISTINCT r.room_id), "
+        "CASE WHEN COUNT(ua.id)=0 THEN 0 "
+        "ELSE SUM(ua.selected_answer = q.correct_answer) * 1.0 / COUNT(ua.id) END "
+        "FROM results r "
+        "JOIN user_answers ua "
+        "  ON r.user_id = ua.user_id AND r.room_id = ua.room_id "
+        "JOIN questions q ON ua.question_id = q.id "
+        "WHERE r.user_id = ? "
+        "GROUP BY q.difficulty;";
+
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "DB error: %s\n", sqlite3_errmsg(db));
+        send(socket_fd, "DIFFICULTY_STATS_FAIL\n", 22, 0);
+        return;
+    }
+
+    sqlite3_bind_int(stmt, 1, user_id);
+
+    char response[RESP_MED] = "DIFFICULTY_STATS|";
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        char entry[RESP_SMALL];
+        snprintf(entry, sizeof(entry),
+            "%s|%d|%.1f%%|",
+            SAFE_TEXT(sqlite3_column_text(stmt, 0)),
+            sqlite3_column_int(stmt, 1),
+            sqlite3_column_double(stmt, 2) * 100);
+
+        if (append_safe(response, sizeof(response), entry) != 0)
+            break;
+    }
+
+    append_safe(response, sizeof(response), "\n");
+    send_response_safe(socket_fd, response);
+    sqlite3_finalize(stmt);
 }

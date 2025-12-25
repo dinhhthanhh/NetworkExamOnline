@@ -352,7 +352,7 @@ void create_stats_screen()
             }
             
             if (f == 6) {
-                int result_id = atoi(fields[0]);
+                // int result_id = atoi(fields[0]);
                 char *room_name = fields[1];
                 int score = atoi(fields[2]);
                 int total = atoi(fields[3]);
@@ -368,7 +368,7 @@ void create_stats_screen()
                 
                 // Icon và room name
                 char room_text[256];
-                snprintf(room_text, sizeof(room_text), "📚 %s", room_name);
+                snprintf(room_text, sizeof(room_text), "%s", room_name);
                 GtkWidget *room_label = gtk_label_new(room_text);
                 gtk_label_set_xalign(GTK_LABEL(room_label), 0.0);
                 gtk_widget_set_size_request(room_label, 250, -1);
@@ -384,13 +384,13 @@ void create_stats_screen()
                 char time_text[64];
                 int minutes = time_taken / 60;
                 int seconds = time_taken % 60;
-                snprintf(time_text, sizeof(time_text), "⏱️ %dm %ds", minutes, seconds);
+                snprintf(time_text, sizeof(time_text), "⏱ %dm %ds", minutes, seconds);
                 GtkWidget *time_label = gtk_label_new(time_text);
                 gtk_widget_set_size_request(time_label, 120, -1);
                 
                 // Date
                 char date_text[128];
-                snprintf(date_text, sizeof(date_text), "📅 %s", completed);
+                snprintf(date_text, sizeof(date_text), "%.110s", completed);
                 GtkWidget *date_label = gtk_label_new(date_text);
                 
                 gtk_box_pack_start(GTK_BOX(test_row), room_label, FALSE, FALSE, 0);
@@ -425,7 +425,7 @@ void create_stats_screen()
 
     // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label("⬅ BACK");
     style_button(back_btn, "#95a5a6");
     gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);

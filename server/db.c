@@ -237,11 +237,6 @@ void init_database() {
   printf("  Username: admin\n");
   printf("  Password: admin123\n");
   printf("========================================\n");
-  printf("Schema updates:\n");
-  printf("  ✓ submit_reason column added\n");
-  printf("  ✓ submitted_at timestamp added\n");
-  printf("  ✓ Performance indexes created\n");
-  printf("========================================\n");
 }
 
 void log_activity(int user_id, const char *action, const char *details) {

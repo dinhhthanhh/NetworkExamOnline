@@ -512,7 +512,7 @@ void view_results(int socket_fd, int room_id)
         sqlite3_bind_int(stmt, 1, room_id);
         
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            int user_id = sqlite3_column_int(stmt, 0);
+            // int user_id = sqlite3_column_int(stmt, 0);
             const char *username = (const char *)sqlite3_column_text(stmt, 1);
             int score = sqlite3_column_int(stmt, 2);
             int total = sqlite3_column_int(stmt, 3);

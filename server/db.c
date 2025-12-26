@@ -119,6 +119,26 @@ void init_database() {
     err_msg = NULL;
   }
 
+  // Thêm cột is_online để theo dõi trạng thái đăng nhập
+  const char *sql_alter_users_online = 
+    "ALTER TABLE users ADD COLUMN is_online INTEGER DEFAULT 0;";
+  
+  sqlite3_exec(db, sql_alter_users_online, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Reset tất cả is_online về 0 khi khởi động server
+  const char *sql_reset_online = 
+    "UPDATE users SET is_online = 0;";
+  
+  sqlite3_exec(db, sql_reset_online, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
   // Tạo admin mặc định nếu chưa có (password: admin123)
   // Hash của "admin123" = 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
   const char *sql_create_admin = 
@@ -147,4 +167,43 @@ void log_activity(int user_id, const char *action, const char *details) {
     fprintf(stderr, "SQL error: %s\n", err_msg);
     sqlite3_free(err_msg);
   }
+}
+
+// Load tất cả users từ DB vào in-memory structure
+void load_users_from_db(void) {
+  char query[200];
+  sqlite3_stmt *stmt;
+
+  snprintf(query, sizeof(query), "SELECT id, username FROM users;");
+
+  pthread_mutex_lock(&server_data.lock);
+
+  server_data.user_count = 0;
+
+  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK) {
+    while (sqlite3_step(stmt) == SQLITE_ROW && server_data.user_count < MAX_CLIENTS) {
+      int idx = server_data.user_count;
+      
+      server_data.users[idx].user_id = sqlite3_column_int(stmt, 0);
+      const char *username = (const char *)sqlite3_column_text(stmt, 1);
+      if (username) {
+        strncpy(server_data.users[idx].username, username, sizeof(server_data.users[idx].username) - 1);
+      }
+      
+      // Khởi tạo trạng thái offline
+      server_data.users[idx].is_online = 0;
+      server_data.users[idx].socket_fd = -1;
+      memset(server_data.users[idx].session_token, 0, sizeof(server_data.users[idx].session_token));
+      server_data.users[idx].last_activity = 0;
+      
+      server_data.user_count++;
+    }
+    
+    printf("[DB_LOAD] Loaded %d users into memory\n", server_data.user_count);
+  } else {
+    fprintf(stderr, "[DB_LOAD] Failed to load users from database\n");
+  }
+
+  sqlite3_finalize(stmt);
+  pthread_mutex_unlock(&server_data.lock);
 }

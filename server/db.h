@@ -4,6 +4,7 @@
 #include "common.h"
 
 void init_database(void);
+void load_users_from_db(void);
 void log_activity(int user_id, const char *action, const char *details);
 
 #endif

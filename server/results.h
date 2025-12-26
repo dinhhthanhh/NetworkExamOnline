@@ -8,5 +8,6 @@ void submit_answer(int socket_fd, int user_id, int room_id, int question_num, in
 void submit_test(int socket_fd, int user_id, int room_id);
 void view_results(int socket_fd, int room_id);
 void auto_submit_on_disconnect(int user_id, int room_id);
+void flush_user_answers(int user_id, int room_id);
 
 #endif

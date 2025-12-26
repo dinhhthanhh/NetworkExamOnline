@@ -189,10 +189,13 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     
     if (n > 0 && strncmp(buffer, "SUBMIT_TEST_OK", 14) == 0) {
         // Parse: SUBMIT_TEST_OK|score|total|time_minutes
-        strtok(buffer, "|"); // Skip "SUBMIT_TEST_OK"
-        int score = atoi(strtok(NULL, "|"));
-        int total = atoi(strtok(NULL, "|"));
-        int time_taken = atoi(strtok(NULL, "|"));
+        char *token = strtok(buffer, "|"); // Skip "SUBMIT_TEST_OK"
+        token = strtok(NULL, "|");
+        int score = token ? atoi(token) : 0;
+        token = strtok(NULL, "|");
+        int total = token ? atoi(token) : 0;
+        token = strtok(NULL, "|\n");  // Remove newline
+        int time_taken = token ? atoi(token) : 0;
         
         // Cleanup trước khi show dialog
         cleanup_exam_ui();

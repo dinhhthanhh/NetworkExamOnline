@@ -12,6 +12,8 @@ void start_test(int socket_fd, int user_id, int room_id);
 void handle_begin_exam(int socket_fd, int user_id, int room_id);
 void handle_resume_exam(int socket_fd, int user_id, int room_id);
 void close_room(int socket_fd, int user_id, int room_id);
+void load_rooms_from_db(void);
+void load_room_answers(int room_id, int user_id);
 
 #endif
 

@@ -2,6 +2,7 @@
 #include "network.h"
 #include "db.h"
 #include "questions.h"
+#include "rooms.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,8 @@ int main()
 
     // Initialize DB and load questions
     init_database();
+    load_users_from_db();  // Load users vào in-memory structure
+    load_rooms_from_db();  // Load rooms vào in-memory structure
     // load_sample_questions();
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);

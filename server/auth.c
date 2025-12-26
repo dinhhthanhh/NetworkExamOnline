@@ -104,11 +104,34 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
         strncpy(user_role, role, sizeof(user_role) - 1);
       }
 
+      // Kiểm tra user đã online chưa (chống đăng nhập đồng thời)
+      int already_online = 0;
+      for (int i = 0; i < server_data.user_count; i++)
+      {
+        if (server_data.users[i].user_id == *user_id && server_data.users[i].is_online == 1)
+        {
+          already_online = 1;
+          printf("[LOGIN_BLOCKED] User %s (ID: %d) is already online from socket %d\n", 
+                 username, *user_id, server_data.users[i].socket_fd);
+          break;
+        }
+      }
+
+      if (already_online)
+      {
+        snprintf(response, sizeof(response), "LOGIN_FAIL|User is already logged in from another device\n");
+        sqlite3_finalize(stmt);
+        pthread_mutex_unlock(&server_data.lock);
+        send(socket_fd, response, strlen(response), 0);
+        return;
+      }
+
       // Generate session token
       char token[64];
       generate_session_token(token, sizeof(token));
 
       // Update user data with token and last activity
+      int user_found = 0;
       for (int i = 0; i < server_data.user_count; i++)
       {
         if (server_data.users[i].user_id == *user_id)
@@ -117,12 +140,38 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
           server_data.users[i].last_activity = time(NULL);
           server_data.users[i].is_online = 1;
           server_data.users[i].socket_fd = socket_fd;
+          user_found = 1;
           break;
         }
       }
 
+      // Nếu user chưa có trong in-memory, thêm vào
+      if (!user_found && server_data.user_count < MAX_CLIENTS)
+      {
+        int idx = server_data.user_count;
+        server_data.users[idx].user_id = *user_id;
+        strncpy(server_data.users[idx].username, username, sizeof(server_data.users[idx].username) - 1);
+        strncpy(server_data.users[idx].session_token, token, sizeof(server_data.users[idx].session_token) - 1);
+        server_data.users[idx].last_activity = time(NULL);
+        server_data.users[idx].is_online = 1;
+        server_data.users[idx].socket_fd = socket_fd;
+        server_data.user_count++;
+      }
+
+      // Đồng bộ trạng thái online vào database
+      char update_query[200];
+      char *err_msg = 0;
+      snprintf(update_query, sizeof(update_query),
+               "UPDATE users SET is_online = 1 WHERE id = %d;", *user_id);
+      sqlite3_exec(db, update_query, 0, 0, &err_msg);
+      if (err_msg) {
+        fprintf(stderr, "[LOGIN] Failed to update is_online in DB: %s\n", err_msg);
+        sqlite3_free(err_msg);
+      }
+
       snprintf(response, sizeof(response), "LOGIN_OK|%d|%s|%s\n", *user_id, token, user_role);
       log_activity(*user_id, "LOGIN", "User logged in");
+      printf("[LOGIN_SUCCESS] User %s (ID: %d) logged in from socket %d\n", username, *user_id, socket_fd);
     }
     else
     {
@@ -133,4 +182,49 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
   sqlite3_finalize(stmt);
   pthread_mutex_unlock(&server_data.lock);
   send(socket_fd, response, strlen(response), 0);
+}
+
+void logout_user(int user_id, int socket_fd)
+{
+  pthread_mutex_lock(&server_data.lock);
+
+  int logged_out_user_id = user_id;
+
+  // Cập nhật trạng thái user trong in-memory structure
+  for (int i = 0; i < server_data.user_count; i++)
+  {
+    if (server_data.users[i].user_id == user_id || 
+        (user_id == -1 && server_data.users[i].socket_fd == socket_fd))
+    {
+      server_data.users[i].is_online = 0;
+      server_data.users[i].socket_fd = -1;
+      memset(server_data.users[i].session_token, 0, sizeof(server_data.users[i].session_token));
+      
+      logged_out_user_id = server_data.users[i].user_id;
+      
+      printf("[LOGOUT] User ID: %d (socket %d) logged out\n", 
+             server_data.users[i].user_id, socket_fd);
+      
+      if (user_id > 0) {
+        log_activity(user_id, "LOGOUT", "User logged out");
+      }
+      
+      // Đồng bộ trạng thái offline vào database
+      if (logged_out_user_id > 0) {
+        char update_query[200];
+        char *err_msg = 0;
+        snprintf(update_query, sizeof(update_query),
+                 "UPDATE users SET is_online = 0 WHERE id = %d;", logged_out_user_id);
+        sqlite3_exec(db, update_query, 0, 0, &err_msg);
+        if (err_msg) {
+          fprintf(stderr, "[LOGOUT] Failed to update is_online in DB: %s\n", err_msg);
+          sqlite3_free(err_msg);
+        }
+      }
+      
+      break;
+    }
+  }
+
+  pthread_mutex_unlock(&server_data.lock);
 }

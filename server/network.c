@@ -25,12 +25,23 @@ void *handle_client(void *arg)
     int n = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
 
     if (n <= 0) {
-      // Detect disconnect - KHÔNG auto submit để user có thể resume sau
-      // Session được lưu trong database (participants + user_answers)
+      // Detect disconnect - GHI TẤT CẢ ANSWERS VÀO DB ĐỂ USER CÓ THỂ RESUME
       if (user_id > 0 && current_room_id > 0) {
-        printf("[DISCONNECT] User %d disconnected from room %d (session preserved for resume)\n", 
+        printf("[DISCONNECT] User %d disconnected from room %d - flushing answers to DB\n", 
                user_id, current_room_id);
+        
+        // **QUAN TRỌNG: Flush tất cả answers từ in-memory vào DB**
+        flush_user_answers(user_id, current_room_id);
+        
+        // KHÔNG auto-submit để user có thể resume sau
         // auto_submit_on_disconnect(user_id, current_room_id); // DISABLED - allow resume
+      }
+      
+      // Cập nhật trạng thái offline khi disconnect
+      if (user_id > 0) {
+        logout_user(user_id, socket_fd);
+      } else {
+        logout_user(-1, socket_fd);  // Logout bằng socket_fd nếu chưa có user_id
       }
       break;
     }
@@ -60,6 +71,14 @@ void *handle_client(void *arg)
       char *username = strtok(NULL, "|");
       char *password = strtok(NULL, "|");
       login_user(socket_fd, username, password, &user_id);
+    }
+    else if (strcmp(cmd, "LOGOUT") == 0)
+    {
+      logout_user(user_id, socket_fd);
+      user_id = -1;  // Reset user_id sau khi logout
+      current_room_id = -1;
+      char response[] = "LOGOUT_OK\n";
+      send(socket_fd, response, strlen(response), 0);
     }
     else if (strcmp(cmd, "LIST_ROOMS") == 0)
     {

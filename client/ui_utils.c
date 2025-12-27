@@ -60,13 +60,38 @@ void show_success_dialog(const char *message)
     gtk_widget_destroy(dialog);
 }
 
-void show_error_dialog(const char *message)
-{
-    GtkWidget *dialog = gtk_message_dialog_new(NULL,
-                                               GTK_DIALOG_MODAL,
-                                               GTK_MESSAGE_ERROR,
-                                               GTK_BUTTONS_OK,
-                                               "%s", message);
+// Helper function để show error dialog
+void show_error_dialog(const char *title, const char *message) {
+    GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(main_window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_ERROR,
+        GTK_BUTTONS_OK,
+        "%s", title);
+    
+    if (message) {
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog), "%s", message);
+    }
+    
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+// Helper function để show info dialog
+void show_info_dialog(const char *title, const char *message) {
+    GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(main_window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_INFO,
+        GTK_BUTTONS_OK,
+        "%s", title);
+    
+    if (message) {
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog), "%s", message);
+    }
+    
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
 }

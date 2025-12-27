@@ -45,7 +45,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
     // Lấy room_id từ dropdown
     const char *room_id_str = gtk_combo_box_get_active_id(GTK_COMBO_BOX(room_combo));
     if (!room_id_str || atoi(room_id_str) == -1) {
-        show_error_dialog("⚠️ Please select a valid room first!");
+        show_error_dialog("Warning", "⚠️ Please select a valid room first!");
         return;
     }
     
@@ -83,7 +83,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             // Đọc file content
             FILE *fp = fopen(filepath, "rb");
             if (!fp) {
-                show_error_dialog("❌ Cannot open file!");
+                show_error_dialog("Error", "❌ Cannot open file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -97,7 +97,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             // Validate file size (max 5MB)
             if (file_size <= 0 || file_size > 5 * 1024 * 1024) {
                 fclose(fp);
-                show_error_dialog("❌ File too large or empty (max 5MB)!");
+                show_error_dialog("Error", "❌ File too large or empty (max 5MB)!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -107,7 +107,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             char *file_buffer = malloc(file_size);
             if (!file_buffer) {
                 fclose(fp);
-                show_error_dialog("❌ Memory allocation failed!");
+                show_error_dialog("Error", "❌ Memory allocation failed!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -118,7 +118,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             
             if (read_bytes != file_size) {
                 free(file_buffer);
-                show_error_dialog("❌ Failed to read file!");
+                show_error_dialog("Error", "❌ Failed to read file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -156,7 +156,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             if (ack_n <= 0 || strncmp(ack_buffer, "READY", 5) != 0) {
                 free(file_buffer);
                 gtk_widget_destroy(loading_dialog);
-                show_error_dialog("❌ Server not ready to receive file!");
+                show_error_dialog("Error", "❌ Server not ready to receive file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -168,7 +168,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             
             if (sent != file_size) {
                 gtk_widget_destroy(loading_dialog);
-                show_error_dialog("❌ Failed to upload file!");
+                show_error_dialog("Error", "❌ Failed to upload file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -254,7 +254,7 @@ void on_submit_question(GtkWidget *widget, gpointer user_data)
     // Lấy room_id từ combo box
     const char *room_id_str = gtk_combo_box_get_active_id(GTK_COMBO_BOX(data->room_combo));
     if (!room_id_str || atoi(room_id_str) == -1) {
-        show_error_dialog("Please select a valid room!");
+        show_error_dialog("Error", "Please select a valid room!");
         return;
     }
     
@@ -281,12 +281,12 @@ void on_submit_question(GtkWidget *widget, gpointer user_data)
     // Validation
     if (strlen(question) == 0 || strlen(opt1) == 0 || strlen(opt2) == 0 || 
         strlen(opt3) == 0 || strlen(opt4) == 0) {
-        show_error_dialog("Please fill all fields!");
+        show_error_dialog("Error", "Please fill all fields!");
         return;
     }
     
     if (!difficulty || !category) {
-        show_error_dialog("Please select difficulty and category!");
+        show_error_dialog("Error", "Please select difficulty and category!");
         return;
     }
     
@@ -316,7 +316,7 @@ void on_submit_question(GtkWidget *widget, gpointer user_data)
             gtk_combo_box_set_active(GTK_COMBO_BOX(data->category_combo), 0);
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(data->correct_radio[0]), TRUE);
         } else {
-            show_error_dialog("Failed to add question!");
+            show_error_dialog("Error", "Failed to add question!");
         }
     }
 }
@@ -738,7 +738,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     char *filepath = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser));
     
     if (!filepath) {
-        show_error_dialog("No file selected!");
+        show_error_dialog("Error", "No file selected!");
         return;
     }
     
@@ -749,7 +749,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     // Read file content
     FILE *fp = fopen(filepath, "rb");
     if (!fp) {
-        show_error_dialog("❌ Cannot open file!");
+        show_error_dialog("Error", "❌ Cannot open file!");
         g_free(filepath);
         return;
     }
@@ -762,7 +762,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     // Validate file size
     if (file_size <= 0 || file_size > 5 * 1024 * 1024) {
         fclose(fp);
-        show_error_dialog("❌ File too large or empty (max 5MB)!");
+        show_error_dialog("Error", "❌ File too large or empty (max 5MB)!");
         g_free(filepath);
         return;
     }
@@ -771,7 +771,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     char *file_buffer = malloc(file_size);
     if (!file_buffer) {
         fclose(fp);
-        show_error_dialog("❌ Memory allocation failed!");
+        show_error_dialog("Error", "❌ Memory allocation failed!");
         g_free(filepath);
         return;
     }
@@ -781,7 +781,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     
     if (read_bytes != file_size) {
         free(file_buffer);
-        show_error_dialog("❌ Failed to read file!");
+        show_error_dialog("Error", "❌ Failed to read file!");
         g_free(filepath);
         return;
     }
@@ -817,7 +817,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     if (ack_n <= 0 || strncmp(ack_buffer, "READY", 5) != 0) {
         free(file_buffer);
         gtk_widget_destroy(loading_dialog);
-        show_error_dialog("❌ Server not ready to receive file!");
+        show_error_dialog("Error", "❌ Server not ready to receive file!");
         g_free(filepath);
         return;
     }
@@ -828,7 +828,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     
     if (sent != file_size) {
         gtk_widget_destroy(loading_dialog);
-        show_error_dialog("❌ Failed to upload file!");
+        show_error_dialog("Error", "❌ Failed to upload file!");
         g_free(filepath);
         return;
     }
@@ -1100,7 +1100,7 @@ void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
         }
         else
         {
-            show_error_dialog("Room name cannot be empty!");
+            show_error_dialog("Error", "Room name cannot be empty!");
         }
     }
     gtk_widget_destroy(GTK_WIDGET(dialog));

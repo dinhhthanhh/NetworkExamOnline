@@ -882,7 +882,7 @@ void on_submit_question(GtkWidget *widget, gpointer user_data)
     // Lấy room_id từ combo box
     const char *room_id_str = gtk_combo_box_get_active_id(GTK_COMBO_BOX(data->room_combo));
     if (!room_id_str || atoi(room_id_str) == -1) {
-        show_error_dialog("Please select a valid room!");
+        show_error_dialog( "Please select a valid room!");
         return;
     }
     

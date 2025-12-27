@@ -97,9 +97,9 @@ void handle_add_question(int client_socket, char *data)
 
     int room_id = atoi(room_id_str);
     int correct_answer = atoi(correct_str);
-    
-    // Validate correct_answer (0-3)
-    if (correct_answer < 0 || correct_answer > 3) {
+
+    // Validate correct_answer (1-4)
+    if (correct_answer < 1 || correct_answer > 4) {
         send(client_socket, "ERROR|Invalid correct answer\n", 30, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -182,11 +182,11 @@ void handle_add_question(int client_socket, char *data)
 
 // void load_sample_questions()
 // {
-//   Question q1 = {1, "2 + 2 = ?", {"3", "4", "5", "6"}, 1, "easy", "math"};
-//   Question q2 = {2, "What is capital of France?", {"London", "Paris", "Berlin", "Madrid"}, 1, "easy", "geography"};
-//   Question q3 = {3, "What is 15 * 8?", {"100", "110", "120", "130"}, 2, "medium", "math"};
-//   Question q4 = {4, "Which planet is closest to sun?", {"Venus", "Mercury", "Earth", "Mars"}, 1, "medium", "science"};
-//   Question q5 = {5, "What is the integral of sin(x)?", {"-cos(x)", "cos(x)", "sin(x)", "-sin(x)"}, 0, "hard", "math"};
+//   Question q1 = {1, "2 + 2 = ?", {"3", "4", "5", "6"}, 2, "easy", "math"}; // correct=2 (option B)
+//   Question q2 = {2, "What is capital of France?", {"London", "Paris", "Berlin", "Madrid"}, 2, "easy", "geography"};
+//   Question q3 = {3, "What is 15 * 8?", {"100", "110", "120", "130"}, 3, "medium", "math"};
+//   Question q4 = {4, "Which planet is closest to sun?", {"Venus", "Mercury", "Earth", "Mars"}, 2, "medium", "science"};
+//   Question q5 = {5, "What is the integral of sin(x)?", {"-cos(x)", "cos(x)", "sin(x)", "-sin(x)"}, 1, "hard", "math"};
 
 //   server_data.questions[0] = q1;
 //   server_data.questions[1] = q2;
@@ -412,9 +412,8 @@ void handle_import_csv(int client_socket, char *data)
         ssize_t n = recv(client_socket, file_buffer + total_received, 
                          file_size - total_received, 0);
         if (n > 0) {
-            total_received += n;
-            printf("[DEBUG] Received %ld bytes (total: %ld/%ld)\n", 
-                   n, total_received, file_size);
+                 total_received += n;
+                 // Received chunk of uploaded file (debug prints removed)
             retry_count = 0; // Reset retry on success
         } else if (n == 0) {
             printf("[ERROR] Connection closed by client\n");

@@ -67,7 +67,7 @@ void get_leaderboard(int socket_fd, int limit)
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         char entry[RESP_SMALL];
         snprintf(entry, sizeof(entry),
-            "#%d|%s|%d|%d|",
+            "#%d|%s|Score:%d|Tests:%d|",
             rank++,
             SAFE_TEXT(sqlite3_column_text(stmt, 0)),
             sqlite3_column_int(stmt, 1),
@@ -85,10 +85,11 @@ void get_leaderboard(int socket_fd, int limit)
 void get_user_test_history(int socket_fd, int user_id)
 {
     const char *sql =
-        "SELECT r.room_id, r.score, r.total_questions, r.time_taken "
+        "SELECT r.id, ro.name, r.score, r.total_questions, r.time_taken, r.submitted_at "
         "FROM results r "
+        "JOIN rooms ro ON r.room_id = ro.id "
         "WHERE r.user_id=? "
-        "ORDER BY r.created_at DESC "
+        "ORDER BY r.submitted_at DESC "
         "LIMIT 20;";
 
     sqlite3_stmt *stmt;
@@ -103,12 +104,16 @@ void get_user_test_history(int socket_fd, int user_id)
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         char entry[256];
+        const char *submitted_at = (const char *)sqlite3_column_text(stmt, 5);
+        // Return time_taken as seconds (numeric) so client can format it
         snprintf(entry, sizeof(entry),
-            "%d|%d/%d|%lldm|",
+            "%d|%s|%d|%d|%lld|%s|",
             sqlite3_column_int(stmt, 0),
-            sqlite3_column_int(stmt, 1),
+            SAFE_TEXT((const char *)sqlite3_column_text(stmt, 1)),
             sqlite3_column_int(stmt, 2),
-            (long long)(sqlite3_column_int64(stmt, 3) / 60));
+            sqlite3_column_int(stmt, 3),
+            (long long)sqlite3_column_int64(stmt, 4),
+            SAFE_TEXT(submitted_at));
 
         if (append_safe(response, sizeof(response), entry) != 0)
             break;
@@ -154,13 +159,13 @@ void get_room_leaderboard(int socket_fd, int room_id, int limit)
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         char entry[256];
         snprintf(entry, sizeof(entry),
-                 "#%d|%s|%d/%d|%lldm|%s|",
+                 "#%d|%s|Score:%d|Tests:%d|Time:%lldm|Reason:%s|",
                  rank++,
-                 sqlite3_column_text(stmt, 0),
+                 SAFE_TEXT((const char *)sqlite3_column_text(stmt, 0)),
                  sqlite3_column_int(stmt, 1),
                  sqlite3_column_int(stmt, 2),
                  (long long)(sqlite3_column_int64(stmt, 3) / 60),
-                 sqlite3_column_text(stmt, 4));
+                 SAFE_TEXT((const char *)sqlite3_column_text(stmt, 4)));
 
         if (append_safe(response, sizeof(response), entry) != 0)
             break;
@@ -192,16 +197,17 @@ void get_user_statistics(int socket_fd, int user_id)
 
     char response[RESP_SMALL];
     if (sqlite3_step(stmt) == SQLITE_ROW) {
+        int tests = sqlite3_column_int(stmt, 0);
+        double avg = sqlite3_column_double(stmt, 1) * 100;
+        int max = sqlite3_column_int(stmt, 2);
+        int total = sqlite3_column_int(stmt, 3);
+        long long time_min = (long long)(sqlite3_column_int64(stmt, 4) / 60);
+
         snprintf(response, sizeof(response),
-            "USER_STATS|%d|%.2f|%d|%d|%lldm\n",
-            sqlite3_column_int(stmt, 0),
-            sqlite3_column_double(stmt, 1) * 100,
-            sqlite3_column_int(stmt, 2),
-            sqlite3_column_int(stmt, 3),
-            (long long)(sqlite3_column_int64(stmt, 4) / 60)
-          ); // sec → min
+            "USER_STATS|Tests:%d|AvgScore:%.2f|MaxScore:%d|TotalScore:%d|TotalTime:%lldm\n",
+            tests, avg, max, total, time_min);
     } else {
-        strcpy(response, "USER_STATS|0|0|0|0|0m\n");
+        strcpy(response, "USER_STATS|Tests:0|AvgScore:0.00|MaxScore:0|TotalScore:0|TotalTime:0m\n");
     }
 
     send_response_safe(socket_fd, response);

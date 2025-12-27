@@ -269,8 +269,8 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
 {
     pthread_mutex_lock(&server_data.lock);
     
-    // Validate selected_answer (0-3 = A-D)
-    if (selected_answer < 0 || selected_answer > 3) {
+    // Validate selected_answer (1-4 = A-D)
+    if (selected_answer < 1 || selected_answer > 4) {
         send(socket_fd, "SAVE_ANSWER_FAIL|Invalid answer\n", 33, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -333,8 +333,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
         // Update cache cho leaderboard realtime
         update_score_cache(user_id, room_id);
         
-        printf("[DEBUG] User %d answered Q%d = %d in room %d\n", 
-               user_id, question_id, selected_answer, room_id);
+        // User answer saved (debug prints removed)
     } else {
         char error[128];
         snprintf(error, sizeof(error), "SAVE_ANSWER_FAIL|%s\n", sqlite3_errmsg(db));
@@ -348,13 +347,20 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
 void submit_test(int socket_fd, int user_id, int room_id)
 {
     pthread_mutex_lock(&server_data.lock);
-    
-    // CHẶN DOUBLE SUBMIT - Kiểm tra đầu tiên
-    if (has_user_submitted(user_id, room_id)) {
-        send(socket_fd, "SUBMIT_TEST_FAIL|Already submitted\n", 36, 0);
+    // Validate authenticated user_id
+    if (user_id <= 0) {
+        send(socket_fd, "SUBMIT_TEST_FAIL|Not authenticated\n", 33, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
+    
+    // CHẶN DOUBLE SUBMIT - Kiểm tra đầu tiên
+        // Chặn double submit
+        if (has_user_submitted(user_id, room_id)) {
+            send(socket_fd, "SUBMIT_TEST_FAIL|Already submitted\n", 34, 0);
+            pthread_mutex_unlock(&server_data.lock);
+            return;
+        }
     
     // Kiểm tra user đã bắt đầu thi chưa
     long start_time = get_user_start_time(user_id, room_id);
@@ -373,18 +379,19 @@ void submit_test(int socket_fd, int user_id, int room_id)
     if (elapsed > max_time) {
         elapsed = max_time; // Cap ở max time
     }
+    long time_taken = elapsed;
     
     // Tính điểm
     int score, total_questions;
     calculate_score(user_id, room_id, &score, &total_questions);
     
     // Lưu kết quả với submit_reason = "manual"
-    if (save_result_to_db(user_id, room_id, score, total_questions, 
-                          elapsed, "manual") != 0) {
-        send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n", 33, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
+        // Lưu kết quả vào DB
+        if (save_result_to_db(user_id, room_id, score, total_questions, time_taken, "manual") != 0) {
+            send(socket_fd, "SUBMIT_TEST_FAIL|DB error\n", 27, 0);
+            pthread_mutex_unlock(&server_data.lock);
+            return;
+        }
     
     // Xóa cache sau khi submit
     clear_score_cache(user_id, room_id);
@@ -411,7 +418,7 @@ void auto_submit_on_timeout(int user_id, int room_id)
     
     // CHẶN DOUBLE SUBMIT
     if (has_user_submitted(user_id, room_id)) {
-        printf("[DEBUG] User %d already submitted, skipping auto-submit\n", user_id);
+        // User already submitted; skip auto-submit
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -453,7 +460,7 @@ void auto_submit_on_disconnect(int user_id, int room_id)
     
     // CHẶN DOUBLE SUBMIT
     if (has_user_submitted(user_id, room_id)) {
-        printf("[DEBUG] User %d already submitted, skipping auto-submit\n", user_id);
+        // User already submitted; skip auto-submit
         pthread_mutex_unlock(&server_data.lock);
         return;
     }

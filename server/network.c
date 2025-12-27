@@ -152,7 +152,9 @@ void *handle_client(void *arg)
     // Practice Mode
     else if (strcmp(cmd, "BEGIN_PRACTICE") == 0)
     {
-      handle_begin_practice(socket_fd, user_id);
+      char *room_str = strtok(NULL, "|");
+      int room_id = room_str ? atoi(room_str) : -1;
+      handle_begin_practice(socket_fd, user_id, room_id);
     }
     else if (strcmp(cmd, "SAVE_PRACTICE_ANSWER") == 0)
     {

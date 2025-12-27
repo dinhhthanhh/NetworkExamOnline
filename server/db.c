@@ -96,12 +96,14 @@ void init_database() {
                             "CREATE TABLE IF NOT EXISTS practice_sessions ("
                             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                             "user_id INTEGER NOT NULL,"
+                            "room_id INTEGER,"
                             "start_time TEXT,"
                             "end_time TEXT,"
                             "duration_minutes INTEGER DEFAULT 30,"
                             "score INTEGER DEFAULT 0,"
                             "submitted INTEGER DEFAULT 0,"
-                            "FOREIGN KEY (user_id) REFERENCES users(id));";
+                            "FOREIGN KEY (user_id) REFERENCES users(id),"
+                            "FOREIGN KEY (room_id) REFERENCES rooms(id));";
 
   const char *create_practice_questions = 
                             "CREATE TABLE IF NOT EXISTS practice_questions ("

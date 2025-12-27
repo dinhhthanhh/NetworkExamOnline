@@ -38,7 +38,7 @@ void on_room_button_clicked(GtkWidget *button, gpointer data)
                  room_name, selected_room_id);
         gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
         
-        printf("[DEBUG] Room selected: ID=%d, Name=%s\n", selected_room_id, room_name);
+        // Room selected (debug prints removed)
     }
 }
 
@@ -173,7 +173,9 @@ void load_rooms_list()
                 
                 g_signal_connect(btn, "clicked", 
                                G_CALLBACK(on_room_button_clicked), NULL);
-
+                if (is_completed) {
+                    gtk_widget_set_sensitive(btn, FALSE);
+                }
                 GtkWidget *row = gtk_list_box_row_new();
                 gtk_container_add(GTK_CONTAINER(row), btn);
                 gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
@@ -272,7 +274,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         return;
     }
 
-    printf("[DEBUG] Joined room %d successfully\n", selected_room_id);
+    // Joined room (debug prints removed)
 
     // Step 2: Check resume state
     flush_socket_buffer(client.socket_fd);
@@ -285,8 +287,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
     memset(resume_buffer, 0, sizeof(resume_buffer));
     ssize_t resume_n = receive_message_timeout(resume_buffer, sizeof(resume_buffer), 5);
     
-    printf("[DEBUG] RESUME_EXAM response (%zd bytes): %.100s...\n", 
-           resume_n, resume_buffer);
+    // RESUME_EXAM response received (debug prints removed)
     
     // Step 3: Handle different states
     if (resume_n > 0) {
@@ -363,12 +364,12 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
             }
             
             if (response == GTK_RESPONSE_YES) {
-                printf("[DEBUG] Resuming exam with saved progress\n");
+                // Resuming exam with saved progress
                 create_exam_page_from_resume(selected_room_id, resume_buffer);
                 return;
             }
             
-            printf("[DEBUG] User chose to start new exam\n");
+            // User chose to start new exam
         }
     }
     
@@ -397,11 +398,11 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
     gtk_widget_destroy(start_dialog);
     
     if (start_response != GTK_RESPONSE_ACCEPT) {
-        printf("[DEBUG] User cancelled exam start\n");
+        // User cancelled exam start
         return;
     }
     
-    printf("[DEBUG] Starting new exam for room %d\n", selected_room_id);
+    // Starting new exam for room
     create_exam_page(selected_room_id);
 }
 

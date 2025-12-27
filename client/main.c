@@ -13,6 +13,8 @@
 
 static int connect_to_server();
 static void show_connection_error_dialog();
+int sock_fd = 0;  
+
 
 int main(int argc, char *argv[]) {
     gtk_init(&argc, &argv);

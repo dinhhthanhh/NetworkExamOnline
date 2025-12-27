@@ -1,6 +1,7 @@
 #include "exam_ui.h"
 #include "net.h"
 #include "room_ui.h"
+#include "ui.h"
 #include <gtk/gtk.h>
 #include <time.h>
 
@@ -14,10 +15,10 @@ static int exam_duration = 0;
 static time_t exam_start_time = 0;
 static guint timer_id = 0;
 static int total_questions = 0;
-static GtkWidget *timer_label = NULL;
 static GtkWidget **question_radios = NULL;
 static GtkWidget **question_frames = NULL;
 static int is_submitting = 0; 
+extern GtkWidget *timer_label;
 
 typedef struct {
     int question_id;
@@ -120,18 +121,19 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     
     // Gửi SAVE_ANSWER đến server
     char msg[128];
+    // Display uses 1-4 for A-D; send 1-4 to server
     snprintf(msg, sizeof(msg), "SAVE_ANSWER|%d|%d|%d\n", 
              exam_room_id, question_id, selected + 1);
     send_message(msg);
-    
-    printf("[DEBUG] Saved answer Q%d = %d\n", question_id, selected + 1);
+
+    // Answer saved (debug prints removed)
 }
 
 // Callback submit bài thi
 void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     // Tránh double submit
     if (is_submitting) {
-        printf("[DEBUG] Already submitting, ignoring...\n");
+        // Already submitting, ignore repeated requests
         return;
     }
     
@@ -149,19 +151,37 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     int submit_room_id = exam_room_id;
     int is_timeout = (widget == NULL); // NULL = auto-submit do hết giờ
     
-    // Confirm dialog (chỉ khi user click button)
+    // Confirm dialog (show answered count) - only when user clicked Submit
     if (!is_timeout) {
+        int answered = 0;
+        if (question_radios && total_questions > 0) {
+            for (int i = 0; i < total_questions; i++) {
+                for (int j = 0; j < 4; j++) {
+                    GtkWidget *r = question_radios[i * 4 + j];
+                    if (r && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(r))) {
+                        answered++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        char confirm_msg[256];
+        snprintf(confirm_msg, sizeof(confirm_msg),
+                 "You have answered %d/%d questions.\nAre you sure you want to submit?",
+                 answered, total_questions);
+
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_MODAL,
                                                    GTK_MESSAGE_QUESTION,
                                                    GTK_BUTTONS_YES_NO,
-                                                   "Submit your exam?");
-        
+                                                   "%s", confirm_msg);
+
         int response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
-        
+
         if (response != GTK_RESPONSE_YES) {
-            // User cancelled - restart timer nếu còn thời gian
+            // User cancelled - restart timer if there's remaining time
             if (exam_start_time > 0) {
                 timer_id = g_timeout_add(1000, update_timer, NULL);
             }
@@ -170,7 +190,6 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     }
 
     is_submitting = 1;
-    printf("[DEBUG] Submitting exam for room: %d\n", submit_room_id);
     
     // Flush socket buffer trước khi gửi
     flush_socket_buffer(client.socket_fd);
@@ -185,7 +204,7 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     memset(buffer, 0, sizeof(buffer));
     ssize_t n = receive_message_timeout(buffer, sizeof(buffer), 10);
     
-    printf("[DEBUG] Submit response (%zd bytes): %s\n", n, buffer);
+    // Submit response received
     
     if (n > 0 && strncmp(buffer, "SUBMIT_TEST_OK", 14) == 0) {
         // Parse response an toàn
@@ -289,7 +308,7 @@ void create_exam_page(int room_id) {
     memset(buffer, 0, sizeof(buffer));
     ssize_t n = receive_message_timeout(buffer, sizeof(buffer), 10);
     
-    printf("[DEBUG] BEGIN_EXAM response (%zd bytes): %.200s...\n", n, buffer);
+    // BEGIN_EXAM response received
     
     if (n <= 0 || strncmp(buffer, "BEGIN_EXAM_OK", 13) != 0) {
         GtkWidget *error_dialog = gtk_message_dialog_new(
@@ -326,7 +345,7 @@ void create_exam_page(int room_id) {
     exam_duration = atoi(token);
     exam_start_time = time(NULL);
     
-    printf("[DEBUG] Duration: %d minutes\n", exam_duration);
+    // Exam duration received
     
     // Đếm số câu hỏi chính xác
     total_questions = 0;
@@ -340,7 +359,7 @@ void create_exam_page(int room_id) {
     }
     free(temp_ptr);
     
-    printf("[DEBUG] Total questions: %d\n", total_questions);
+    // Total questions parsed
     
     if (total_questions == 0) {
         free(buffer_copy);
@@ -391,8 +410,7 @@ void create_exam_page(int room_id) {
             }
         }
         
-        printf("[DEBUG] Q%d: ID=%d, Text=%s\n", 
-               q_idx + 1, questions[q_idx].question_id, questions[q_idx].text);
+        // Question parsed
         q_idx++;
     }
     
@@ -403,7 +421,7 @@ void create_exam_page(int room_id) {
         goto parse_error;
     }
     
-    printf("[DEBUG] Successfully parsed %d questions\n", total_questions);
+    // Successfully parsed questions
     
     // Tạo UI
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
@@ -500,13 +518,8 @@ void create_exam_page(int room_id) {
     g_signal_connect(submit_btn, "clicked", G_CALLBACK(on_submit_exam_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit_btn, FALSE, FALSE, 0);
     
-    // Show UI
-    GtkWidget *old_child = gtk_bin_get_child(GTK_BIN(main_window));
-    if (old_child) {
-        gtk_container_remove(GTK_CONTAINER(main_window), old_child);
-    }
-    gtk_container_add(GTK_CONTAINER(main_window), vbox);
-    gtk_widget_show_all(main_window);
+    // Show UI via show_view to keep `current_view` in sync
+    show_view(vbox);
     
     // Start timer
     timer_id = g_timeout_add(1000, update_timer, NULL);
@@ -528,7 +541,7 @@ parse_error:
 }
 
 void cleanup_exam_ui() {
-    printf("[DEBUG] Cleaning up exam UI...\n");
+    // Cleaning up exam UI
     
     // Stop timer first
     if (timer_id > 0) {
@@ -562,7 +575,7 @@ void cleanup_exam_ui() {
     total_questions = 0;
     is_submitting = 0;
     
-    printf("[DEBUG] Cleanup completed\n");
+    // Cleanup completed
 }
 
 // Resume exam từ session cũ (tương tự, cần fix giống trên)
@@ -612,7 +625,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
 
     exam_start_time = time(NULL) - elapsed;
 
-    printf("[DEBUG] Resume - Duration: %d min, Elapsed: %d sec\n", exam_duration, elapsed);
+    // Resume info received
 
     // Đếm số câu hỏi
     total_questions = 0;
@@ -772,10 +785,8 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
                      G_CALLBACK(on_submit_exam_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit, FALSE, FALSE, 0);
 
-    GtkWidget *old = gtk_bin_get_child(GTK_BIN(main_window));
-    if (old) gtk_container_remove(GTK_CONTAINER(main_window), old);
-    gtk_container_add(GTK_CONTAINER(main_window), vbox);
-    gtk_widget_show_all(main_window);
+    // Use show_view so current_view is tracked correctly
+    show_view(vbox);
 
     timer_id = g_timeout_add(1000, update_timer, NULL);
 

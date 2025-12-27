@@ -2,6 +2,7 @@
 #define UI_H
 
 #include "include/client_common.h"
+#include <gtk/gtk.h>
 
 // Main menu
 void create_main_menu(void);
@@ -31,5 +32,6 @@ void create_stats_screen(void);
 void create_leaderboard_screen(void);
 void create_admin_panel(void);
 void create_question_bank_screen(void);
+void show_view(GtkWidget *view);
 
 #endif // UI_H

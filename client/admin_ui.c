@@ -45,7 +45,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
     // Lấy room_id từ dropdown
     const char *room_id_str = gtk_combo_box_get_active_id(GTK_COMBO_BOX(room_combo));
     if (!room_id_str || atoi(room_id_str) == -1) {
-        show_error_dialog("Warning", "⚠️ Please select a valid room first!");
+        show_error_dialog("Warning", "Please select a valid room first!");
         return;
     }
     
@@ -53,7 +53,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
     
     // Tạo file chooser dialog
     GtkWidget *dialog = gtk_file_chooser_dialog_new(
-        "📂 Select CSV File to Import",
+        "Select CSV File to Import",
         GTK_WINDOW(main_window),
         GTK_FILE_CHOOSER_ACTION_OPEN,
         "Cancel", GTK_RESPONSE_CANCEL,
@@ -83,7 +83,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             // Đọc file content
             FILE *fp = fopen(filepath, "rb");
             if (!fp) {
-                show_error_dialog("Error", "❌ Cannot open file!");
+                show_error_dialog("Error", "Cannot open file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -97,7 +97,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             // Validate file size (max 5MB)
             if (file_size <= 0 || file_size > 5 * 1024 * 1024) {
                 fclose(fp);
-                show_error_dialog("Error", "❌ File too large or empty (max 5MB)!");
+                show_error_dialog("Error", "File too large or empty (max 5MB)!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -107,7 +107,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             char *file_buffer = malloc(file_size);
             if (!file_buffer) {
                 fclose(fp);
-                show_error_dialog("Error", "❌ Memory allocation failed!");
+                show_error_dialog("Error", "Memory allocation failed!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -118,7 +118,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             
             if (read_bytes != file_size) {
                 free(file_buffer);
-                show_error_dialog("Error", "❌ Failed to read file!");
+                show_error_dialog("Error", "Failed to read file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -136,7 +136,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_INFO,
                 GTK_BUTTONS_NONE,
-                "⏳ Uploading and importing CSV...\n\nFile: %s (%ld bytes)\nPlease wait...",
+                "Uploading and importing CSV...\n\nFile: %s (%ld bytes)\nPlease wait...",
                 filename, file_size);
             gtk_widget_show_all(loading_dialog);
             
@@ -156,7 +156,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             if (ack_n <= 0 || strncmp(ack_buffer, "READY", 5) != 0) {
                 free(file_buffer);
                 gtk_widget_destroy(loading_dialog);
-                show_error_dialog("Error", "❌ Server not ready to receive file!");
+                show_error_dialog("Error", " Server not ready to receive file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -168,7 +168,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
             
             if (sent != file_size) {
                 gtk_widget_destroy(loading_dialog);
-                show_error_dialog("Error", "❌ Failed to upload file!");
+                show_error_dialog("Error", " Failed to upload file!");
                 g_free(filepath);
                 gtk_widget_destroy(dialog);
                 return;
@@ -191,10 +191,10 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
                     {
                         char success_msg[256];
                         snprintf(success_msg, sizeof(success_msg),
-                                "✅ Import successful!\n\n"
-                                "📝 Imported %d question(s) to this room.\n\n"
-                                "File: %s",
-                                count, filename);
+                            "Import successful!\n\n"
+                            "Imported %d question(s) to this room.\n\n"
+                            "File: %s",
+                            count, filename);
                         
                         GtkWidget *success_dialog = gtk_message_dialog_new(
                             GTK_WINDOW(main_window),
@@ -210,7 +210,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
                 {
                     char error_msg[512];
                     snprintf(error_msg, sizeof(error_msg),
-                            "❌ Import failed!\n\n"
+                            " Import failed!\n\n"
                             "Server error: %.200s\n\n"
                             "Please check:\n"
                             "• CSV format is correct\n"
@@ -235,7 +235,7 @@ void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
                     GTK_DIALOG_DESTROY_WITH_PARENT,
                     GTK_MESSAGE_ERROR,
                     GTK_BUTTONS_OK,
-                    "❌ No response from server!\n\nPlease check connection.");
+                    "No response from server!\n\nPlease check connection.");
                 gtk_dialog_run(GTK_DIALOG(error_dialog));
                 gtk_widget_destroy(error_dialog);
             }
@@ -305,7 +305,7 @@ void on_submit_question(GtkWidget *widget, gpointer user_data)
     if (n > 0) {
         buffer[n] = '\0';
         if (strstr(buffer, "QUESTION_ADDED")) {
-            show_success_dialog("✅ Question added successfully!");
+            show_success_dialog(" Question added successfully!");
             // Reset form
             gtk_entry_set_text(GTK_ENTRY(data->question_entry), "");
             gtk_entry_set_text(GTK_ENTRY(data->opt1_entry), "");
@@ -353,7 +353,7 @@ void on_start_room_clicked(GtkWidget *widget, gpointer data) {
                                        GTK_DIALOG_DESTROY_WITH_PARENT,
                                        GTK_MESSAGE_INFO,
                                        GTK_BUTTONS_OK,
-                                       "✅ Room opened successfully!");
+                                       " Room opened successfully!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         
@@ -372,7 +372,7 @@ void on_start_room_clicked(GtkWidget *widget, gpointer data) {
                                        GTK_DIALOG_DESTROY_WITH_PARENT,
                                        GTK_MESSAGE_ERROR,
                                        GTK_BUTTONS_OK,
-                                       "❌ %s", error_msg);
+                                       " %s", error_msg);
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
@@ -410,7 +410,7 @@ void on_close_room_clicked(GtkWidget *widget, gpointer data) {
                                        GTK_DIALOG_DESTROY_WITH_PARENT,
                                        GTK_MESSAGE_INFO,
                                        GTK_BUTTONS_OK,
-                                       "✅ Room closed successfully!");
+                                       " Room closed successfully!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         
@@ -429,7 +429,7 @@ void on_close_room_clicked(GtkWidget *widget, gpointer data) {
                                        GTK_DIALOG_DESTROY_WITH_PARENT,
                                        GTK_MESSAGE_ERROR,
                                        GTK_BUTTONS_OK,
-                                       "❌ %s", error_msg);
+                                       " %s", error_msg);
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
@@ -443,7 +443,7 @@ void create_admin_panel()
     gtk_widget_set_margin_end(vbox, 20);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>⚙️ ADMIN PANEL - My Rooms</span>");
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>ADMIN PANEL - My Rooms</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -496,9 +496,9 @@ void create_admin_panel()
                 // Room info
                 char info_text[512];
                 snprintf(info_text, sizeof(info_text),
-                        "<b>%s</b> (ID: %d)\n"
-                        "⏱️ Duration: %d minutes | 📝 %s | Status: %s",
-                        room_name, room_id, duration, question_info, status);
+                    "<b>%s</b> (ID: %d)\n"
+                    "Duration: %d minutes | %s | Status: %s",
+                    room_name, room_id, duration, question_info, status);
                 
                 GtkWidget *info_label = gtk_label_new(NULL);
                 gtk_label_set_markup(GTK_LABEL(info_label), info_text);
@@ -510,7 +510,7 @@ void create_admin_panel()
                 
                 if (strcmp(status, "Open") == 0) {
                     // Room đang Open - hiển thị button CLOSE
-                    GtkWidget *close_btn = gtk_button_new_with_label("🔒 CLOSE");
+                    GtkWidget *close_btn = gtk_button_new_with_label(" CLOSE");
                     style_button(close_btn, "#e74c3c");
                     gtk_widget_set_size_request(close_btn, 120, 40);
                     g_signal_connect(close_btn, "clicked", 
@@ -519,7 +519,7 @@ void create_admin_panel()
                     gtk_box_pack_start(GTK_BOX(btn_box), close_btn, FALSE, FALSE, 0);
                 } else {
                     // Room đang Closed - hiển thị button OPEN
-                    GtkWidget *open_btn = gtk_button_new_with_label("🔓 OPEN");
+                    GtkWidget *open_btn = gtk_button_new_with_label("OPEN");
                     style_button(open_btn, "#27ae60");
                     gtk_widget_set_size_request(open_btn, 120, 40);
                     g_signal_connect(open_btn, "clicked", 
@@ -538,13 +538,13 @@ void create_admin_panel()
         }
 
         if (room_count == 0) {
-            GtkWidget *empty_label = gtk_label_new("📭 You haven't created any rooms yet");
+            GtkWidget *empty_label = gtk_label_new("You haven't created any rooms yet");
             gtk_widget_set_margin_top(empty_label, 50);
             gtk_widget_set_margin_bottom(empty_label, 50);
             gtk_container_add(GTK_CONTAINER(list_box), empty_label);
         }
     } else {
-        GtkWidget *error_label = gtk_label_new("❌ Failed to load rooms");
+        GtkWidget *error_label = gtk_label_new("Failed to load rooms");
         gtk_widget_set_margin_top(error_label, 50);
         gtk_widget_set_margin_bottom(error_label, 50);
         gtk_container_add(GTK_CONTAINER(list_box), error_label);
@@ -552,7 +552,7 @@ void create_admin_panel()
 
     // Back button
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label(" BACK");
     style_button(back_btn, "#95a5a6");
     gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
@@ -568,7 +568,7 @@ void create_question_bank_screen()
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_ERROR,
                                                    GTK_BUTTONS_OK,
-                                                   "❌ Permission Denied");
+                                                   " Permission Denied");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
                                                  "Only admin users can add questions.");
         gtk_dialog_run(GTK_DIALOG(dialog));
@@ -582,14 +582,14 @@ void create_question_bank_screen()
     gtk_widget_set_margin_end(vbox, 20);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>📚 QUESTION BANK</span>");
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='20480'>QUESTION BANK</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
     GtkWidget *info = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(info), "<span foreground='#27ae60' weight='bold'>✏️ Add new questions to your rooms:</span>");
+    gtk_label_set_markup(GTK_LABEL(info), "<span foreground='#27ae60' weight='bold'>Add new questions to your rooms:</span>");
     gtk_box_pack_start(GTK_BOX(vbox), info, FALSE, FALSE, 0);
 
     GtkWidget *form_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -668,7 +668,7 @@ void create_question_bank_screen()
 
     // Difficulty Dropdown
     GtkWidget *difficulty_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(difficulty_label), "<span foreground='#3498db' weight='bold'>📊 Difficulty:</span>");
+    gtk_label_set_markup(GTK_LABEL(difficulty_label), "<span foreground='#3498db' weight='bold'>Difficulty:</span>");
     gtk_box_pack_start(GTK_BOX(form_box), difficulty_label, FALSE, FALSE, 5);
     
     GtkWidget *difficulty_combo = gtk_combo_box_text_new();
@@ -680,7 +680,7 @@ void create_question_bank_screen()
 
     // Category Dropdown
     GtkWidget *category_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(category_label), "<span foreground='#9b59b6' weight='bold'>📚 Category:</span>");
+    gtk_label_set_markup(GTK_LABEL(category_label), "<span foreground='#9b59b6' weight='bold'>Category:</span>");
     gtk_box_pack_start(GTK_BOX(form_box), category_label, FALSE, FALSE, 5);
     
     GtkWidget *category_combo = gtk_combo_box_text_new();
@@ -695,9 +695,9 @@ void create_question_bank_screen()
     gtk_box_pack_start(GTK_BOX(form_box), category_combo, FALSE, FALSE, 0);
 
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *submit_btn = gtk_button_new_with_label("✅ ADD QUESTION");
-    GtkWidget *import_btn = gtk_button_new_with_label("📥 IMPORT CSV");
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *submit_btn = gtk_button_new_with_label("ADD QUESTION");
+    GtkWidget *import_btn = gtk_button_new_with_label("IMPORT CSV");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     style_button(submit_btn, "#27ae60");
     style_button(import_btn, "#9b59b6");
     style_button(back_btn, "#95a5a6");
@@ -749,7 +749,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     // Read file content
     FILE *fp = fopen(filepath, "rb");
     if (!fp) {
-        show_error_dialog("Error", "❌ Cannot open file!");
+        show_error_dialog("Error", " Cannot open file!");
         g_free(filepath);
         return;
     }
@@ -762,7 +762,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     // Validate file size
     if (file_size <= 0 || file_size > 5 * 1024 * 1024) {
         fclose(fp);
-        show_error_dialog("Error", "❌ File too large or empty (max 5MB)!");
+        show_error_dialog("Error", " File too large or empty (max 5MB)!");
         g_free(filepath);
         return;
     }
@@ -771,7 +771,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     char *file_buffer = malloc(file_size);
     if (!file_buffer) {
         fclose(fp);
-        show_error_dialog("Error", "❌ Memory allocation failed!");
+        show_error_dialog("Error", " Memory allocation failed!");
         g_free(filepath);
         return;
     }
@@ -781,7 +781,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     
     if (read_bytes != file_size) {
         free(file_buffer);
-        show_error_dialog("Error", "❌ Failed to read file!");
+        show_error_dialog("Error", " Failed to read file!");
         g_free(filepath);
         return;
     }
@@ -817,7 +817,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     if (ack_n <= 0 || strncmp(ack_buffer, "READY", 5) != 0) {
         free(file_buffer);
         gtk_widget_destroy(loading_dialog);
-        show_error_dialog("Error", "❌ Server not ready to receive file!");
+        show_error_dialog("Error", " Server not ready to receive file!");
         g_free(filepath);
         return;
     }
@@ -828,7 +828,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
     
     if (sent != file_size) {
         gtk_widget_destroy(loading_dialog);
-        show_error_dialog("Error", "❌ Failed to upload file!");
+        show_error_dialog("Error", " Failed to upload file!");
         g_free(filepath);
         return;
     }
@@ -844,7 +844,7 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
         int count = 0;
         if (sscanf(buffer, "IMPORT_OK|%d", &count) == 1) {
             char msg[256];
-            snprintf(msg, sizeof(msg), "✅ Successfully imported %d questions!", count);
+            snprintf(msg, sizeof(msg), " Successfully imported %d questions!", count);
             result_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                  GTK_DIALOG_DESTROY_WITH_PARENT,
                                                  GTK_MESSAGE_INFO,
@@ -855,11 +855,11 @@ void on_csv_file_selected(GtkWidget *widget, gpointer data)
                                                  GTK_DIALOG_DESTROY_WITH_PARENT,
                                                  GTK_MESSAGE_INFO,
                                                  GTK_BUTTONS_OK,
-                                                 "✅ Import successful!");
+                                                 " Import successful!");
         }
     } else {
         char error_msg[256];
-        snprintf(error_msg, sizeof(error_msg), "❌ Import failed!\n\n%.200s", 
+        snprintf(error_msg, sizeof(error_msg), " Import failed!\n\n%.200s", 
                  n > 0 ? buffer : "No response from server");
         result_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                              GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -883,7 +883,7 @@ void create_csv_import_screen()
     // Title
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-        "<span foreground='#2c3e50' weight='bold' size='22000'>📥 IMPORT QUESTIONS FROM CSV</span>");
+        "<span foreground='#2c3e50' weight='bold' size='22000'>IMPORT QUESTIONS FROM CSV</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -896,7 +896,7 @@ void create_csv_import_screen()
     
     GtkWidget *info1 = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(info1), 
-        "<span foreground='#27ae60' weight='bold' size='11000'>📋 CSV File Format:</span>");
+        "<span foreground='#27ae60' weight='bold' size='11000'>CSV File Format:</span>");
     gtk_label_set_xalign(GTK_LABEL(info1), 0);
     gtk_box_pack_start(GTK_BOX(info_box), info1, FALSE, FALSE, 0);
     
@@ -929,7 +929,7 @@ void create_csv_import_screen()
     // Example
     GtkWidget *example_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(example_label),
-        "<span foreground='#3498db' weight='bold'>💡 Example:</span>");
+        "<span foreground='#3498db' weight='bold'>Example:</span>");
     gtk_label_set_xalign(GTK_LABEL(example_label), 0);
     gtk_box_pack_start(GTK_BOX(vbox), example_label, FALSE, FALSE, 0);
     
@@ -969,11 +969,11 @@ void create_csv_import_screen()
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_set_margin_top(button_box, 20);
     
-    GtkWidget *import_btn = gtk_button_new_with_label("📥 IMPORT NOW");
+    GtkWidget *import_btn = gtk_button_new_with_label("IMPORT NOW");
     style_button(import_btn, "#27ae60");
     gtk_widget_set_size_request(import_btn, -1, 45);
     
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     style_button(back_btn, "#95a5a6");
     gtk_widget_set_size_request(back_btn, -1, 45);
     
@@ -994,7 +994,7 @@ void create_csv_import_screen()
 void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
 {
     // Tạo dialog để nhập thông tin phòng
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("➕ Create New Room",
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Create New Room",
                                                      GTK_WINDOW(main_window),
                                                      GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
                                                      "Cancel", GTK_RESPONSE_CANCEL,
@@ -1077,7 +1077,7 @@ void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
                 GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                                   "✅ Room created successfully!");
+                                                                   " Room created successfully!");
                 gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(success_dialog),
                                                          "You can now add questions and manage this room.");
                 gtk_dialog_run(GTK_DIALOG(success_dialog));
@@ -1091,7 +1091,7 @@ void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
                 GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                  GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                  GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                                 "❌ Failed to create room!");
+                                                                 " Failed to create room!");
                 gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
                                                          "Server response: %s", buffer);
                 gtk_dialog_run(GTK_DIALOG(error_dialog));

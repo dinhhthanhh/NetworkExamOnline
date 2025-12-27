@@ -18,7 +18,7 @@ void on_room_button_clicked(GtkWidget *button, gpointer data)
     
     // Không cho phép chọn phòng đã hoàn thành
     if (is_completed) {
-        show_info_dialog("⚠️ Already Completed", 
+        show_info_dialog("Already Completed", 
                         "You have already completed this exam.\n"
                         "Please choose another room.");
         return;
@@ -34,7 +34,7 @@ void on_room_button_clicked(GtkWidget *button, gpointer data)
         
         char markup[256];
         snprintf(markup, sizeof(markup), 
-                 "<span foreground='#27ae60' weight='bold'>✅ Selected: %s (ID: %d)</span>", 
+                 "<span foreground='#27ae60' weight='bold'> Selected: %s (ID: %d)</span>", 
                  room_name, selected_room_id);
         gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
         
@@ -92,11 +92,11 @@ void load_rooms_list()
                 char button_label[256];
                 if (is_completed) {
                     snprintf(button_label, sizeof(button_label), 
-                            "✅ %s | ⏱️ %dmin | 👤 %s | 🎯 %s [COMPLETED]", 
+                            "%s | %dmin | %s | %s [COMPLETED]", 
                             room_name, time_limit, owner, attempts_info);
                 } else {
                     snprintf(button_label, sizeof(button_label), 
-                            "🏠 %s | ⏱️ %dmin | 👤 %s | 🎯 %s", 
+                            "%s | %dmin | %s | %s", 
                             room_name, time_limit, owner, attempts_info);
                 }
                 
@@ -189,21 +189,21 @@ void load_rooms_list()
         if (found_previous_selection) {
             char markup[256];
             snprintf(markup, sizeof(markup), 
-                     "<span foreground='#27ae60' weight='bold'>✅ Selected: %s (ID: %d)</span>", 
+                     "<span foreground='#27ae60' weight='bold'>Selected: %s (ID: %d)</span>", 
                      persistent_selected_room_name, selected_room_id);
             gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
         } else {
             persistent_selected_room_id = -1;
             persistent_selected_room_name[0] = '\0';
             gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                                "<span foreground='#e74c3c'>❌ No room selected</span>");
+                                "<span foreground='#e74c3c'>No room selected</span>");
         }
         
-        if (room_count == 0)
+            if (room_count == 0)
         {
             GtkWidget *label = gtk_label_new(NULL);
             gtk_label_set_markup(GTK_LABEL(label), 
-                               "<span foreground='#95a5a6' size='large'>📭 No rooms available. Create one!</span>");
+                               "<span foreground='#95a5a6' size='large'>No rooms available. Create one!</span>");
             GtkWidget *row = gtk_list_box_row_new();
             gtk_container_add(GTK_CONTAINER(row), label);
             gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
@@ -216,13 +216,13 @@ void load_rooms_list()
         
         GtkWidget *label = gtk_label_new(NULL);
         gtk_label_set_markup(GTK_LABEL(label), 
-                           "<span foreground='#e74c3c'>⚠️ Cannot load rooms. Check connection.</span>");
+                   "<span foreground='#e74c3c'>Cannot load rooms. Check connection.</span>");
         GtkWidget *row = gtk_list_box_row_new();
         gtk_container_add(GTK_CONTAINER(row), label);
         gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
         
         gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                            "<span foreground='#e74c3c'>❌ No room selected</span>");
+                            "<span foreground='#e74c3c'> No room selected</span>");
     }
 
     gtk_widget_show_all(GTK_WIDGET(rooms_list));
@@ -248,7 +248,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
 {
     if (selected_room_id < 0)
     {
-        show_error_dialog("⚠️ No Room Selected", 
+        show_error_dialog(" No Room Selected", 
                          "Please select a room first!");
         return;
     }
@@ -270,7 +270,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
                 "Server response: %s", 
                 (n > 0 && buffer[0]) ? buffer : "No response");
         
-        show_error_dialog("❌ Failed to Join Room", error_msg);
+        show_error_dialog(" Failed to Join Room", error_msg);
         return;
     }
 
@@ -312,7 +312,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
                 GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_INFO,
                 GTK_BUTTONS_OK,
-                "✅ Exam Already Completed");
+                " Exam Already Completed");
             
             char result_text[256];
             snprintf(result_text, sizeof(result_text),
@@ -482,7 +482,7 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
                     receive_message(attempts_buffer, sizeof(attempts_buffer));
                 }
                 
-                show_info_dialog("✅ Success", "Room created successfully!");
+                show_info_dialog(" Success", "Room created successfully!");
                 load_rooms_list();
             } else {
                 show_error_dialog("Error", "Could not create room. Please try again.");
@@ -519,7 +519,7 @@ void create_test_mode_screen()
     
     GtkWidget *join_btn = gtk_button_new_with_label("🚪 JOIN ROOM");
     GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label(" BACK");
 
     style_button(join_btn, "#3498db");
     style_button(refresh_btn, "#f39c12");
@@ -538,12 +538,12 @@ void create_test_mode_screen()
     if (persistent_selected_room_id > 0) {
         char markup[256];
         snprintf(markup, sizeof(markup), 
-                 "<span foreground='#27ae60' weight='bold'>✅ Selected: %s (ID: %d)</span>", 
+                 "<span foreground='#27ae60' weight='bold'> Selected: %s (ID: %d)</span>", 
                  persistent_selected_room_name, persistent_selected_room_id);
         gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
     } else {
         gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                            "<span foreground='#e74c3c' size='large'>❌ No room selected</span>");
+                            "<span foreground='#e74c3c' size='large'> No room selected</span>");
     }
     
     gtk_box_pack_start(GTK_BOX(vbox), selected_room_label, FALSE, FALSE, 5);

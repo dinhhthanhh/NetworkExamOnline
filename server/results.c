@@ -18,7 +18,7 @@ static long get_user_start_time(int user_id, int room_id)
     
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "[ERROR] Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to prepare statement: %s", sqlite3_errmsg(db));
         return 0;
     }
     
@@ -41,7 +41,7 @@ static int has_user_submitted(int user_id, int room_id)
     
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "[ERROR] Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to prepare statement: %s", sqlite3_errmsg(db));
         return 0;
     }
     
@@ -70,7 +70,7 @@ static int get_room_duration(int room_id)
         }
         sqlite3_finalize(stmt);
     } else {
-        fprintf(stderr, "[ERROR] Failed to get room duration: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to get room duration: %s", sqlite3_errmsg(db));
     }
     
     return duration;
@@ -124,7 +124,7 @@ static int save_result_to_db(int user_id, int room_id, int score,
     
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "[ERROR] Failed to prepare insert: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to prepare insert: %s", sqlite3_errmsg(db));
         return -1;
     }
     
@@ -139,7 +139,7 @@ static int save_result_to_db(int user_id, int room_id, int score,
     sqlite3_finalize(stmt);
     
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "[ERROR] Failed to insert result: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to insert result: %s", sqlite3_errmsg(db));
         return -1;
     }
     
@@ -403,8 +403,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
     send(socket_fd, response, strlen(response), 0);
     
     log_activity(user_id, "SUBMIT_TEST", "Test submitted manually");
-    printf("[INFO] User %d submitted test (manual) - Score: %d/%d, Time: %ld min\n", 
-           user_id, score, total_questions, elapsed / 60);
+    LOG_INFO("User %d submitted test (manual) - Score: %d/%d, Time: %ld min", user_id, score, total_questions, elapsed / 60);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -414,7 +413,7 @@ void auto_submit_on_timeout(int user_id, int room_id)
 {
     pthread_mutex_lock(&server_data.lock);
     
-    printf("[INFO] Auto-submit (timeout) for user %d in room %d\n", user_id, room_id);
+    LOG_INFO("Auto-submit (timeout) for user %d in room %d", user_id, room_id);
     
     // CHẶN DOUBLE SUBMIT
     if (has_user_submitted(user_id, room_id)) {
@@ -445,8 +444,7 @@ void auto_submit_on_timeout(int user_id, int room_id)
     clear_score_cache(user_id, room_id);
     
     log_activity(user_id, "AUTO_SUBMIT_TIMEOUT", "Test auto-submitted on timeout");
-    printf("[INFO] Auto-submitted (timeout) for user %d - Score: %d/%d\n", 
-           user_id, score, total_questions);
+    LOG_INFO("Auto-submitted (timeout) for user %d - Score: %d/%d", user_id, score, total_questions);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -456,7 +454,7 @@ void auto_submit_on_disconnect(int user_id, int room_id)
 {
     pthread_mutex_lock(&server_data.lock);
     
-    printf("[INFO] Auto-submit (disconnect) for user %d in room %d\n", user_id, room_id);
+    LOG_INFO("Auto-submit (disconnect) for user %d in room %d", user_id, room_id);
     
     // CHẶN DOUBLE SUBMIT
     if (has_user_submitted(user_id, room_id)) {
@@ -493,8 +491,7 @@ void auto_submit_on_disconnect(int user_id, int room_id)
     clear_score_cache(user_id, room_id);
     
     log_activity(user_id, "AUTO_SUBMIT_DISCONNECT", "Test auto-submitted on disconnect");
-    printf("[INFO] Auto-submitted (disconnect) for user %d - Score: %d/%d\n", 
-           user_id, score, total_questions);
+    LOG_INFO("Auto-submitted (disconnect) for user %d - Score: %d/%d", user_id, score, total_questions);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -534,7 +531,7 @@ void view_results(int socket_fd, int room_id)
         }
         sqlite3_finalize(stmt);
     } else {
-        fprintf(stderr, "[ERROR] Failed to query results: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to query results: %s", sqlite3_errmsg(db));
     }
     
     strcat(response, "\n");

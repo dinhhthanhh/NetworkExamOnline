@@ -8,7 +8,7 @@ void init_database() {
   int rc = sqlite3_open("quiz_app.db", &db);
 
   if (rc != SQLITE_OK) {
-    fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
+    LOG_ERROR("Cannot open database: %s", sqlite3_errmsg(db));
     return;
   }
 
@@ -58,11 +58,12 @@ void init_database() {
                             "CREATE TABLE IF NOT EXISTS rooms("
                             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                             "name TEXT NOT NULL,"
-                            "host_id INTEGER NOT NULL,"
+                            "host_id INTEGER DEFAULT 0,"
                             "duration INTEGER DEFAULT 30,"  // Thời gian thi (phút)
                             "is_active INTEGER DEFAULT 1,"  // 1: đang mở, 0: đã đóng
+                            "max_attempts INTEGER DEFAULT 0,"
                             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                            "FOREIGN KEY(host_id) REFERENCES users(id) ON DELETE CASCADE"
+                            "FOREIGN KEY(host_id) REFERENCES users(id)"
                             ");";
   
   const char *sql_participants = 
@@ -232,13 +233,8 @@ void init_database() {
   sqlite3_exec(db, sql_create_admin, 0, 0, &err_msg);
   if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
 
-  printf("========================================\n");
-  printf("Database initialized successfully\n");
-  printf("========================================\n");
-  printf("Default admin account:\n");
-  printf("  Username: admin\n");
-  printf("  Password: admin123\n");
-  printf("========================================\n");
+  LOG_INFO("Database initialized successfully");
+  LOG_INFO("Default admin account: Username=admin Password=admin123");
 }
 
 void log_activity(int user_id, const char *action, const char *details) {
@@ -247,7 +243,7 @@ void log_activity(int user_id, const char *action, const char *details) {
   
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-    fprintf(stderr, "[ERROR] Failed to prepare log_activity: %s\n", sqlite3_errmsg(db));
+    LOG_ERROR("Failed to prepare log_activity: %s", sqlite3_errmsg(db));
     return;
   }
   
@@ -256,7 +252,7 @@ void log_activity(int user_id, const char *action, const char *details) {
   sqlite3_bind_text(stmt, 3, details, -1, SQLITE_STATIC);
   
   if (sqlite3_step(stmt) != SQLITE_DONE) {
-    fprintf(stderr, "[ERROR] Failed to log activity: %s\n", sqlite3_errmsg(db));
+    LOG_ERROR("Failed to log activity: %s", sqlite3_errmsg(db));
   }
   
   sqlite3_finalize(stmt);

@@ -14,9 +14,9 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
     if (strlen(username) == 0 || strlen(password) == 0)
     {
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-                                                   "⚠️ Please enter username and password");
+                               GTK_DIALOG_DESTROY_WITH_PARENT,
+                               GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+                               "Please enter username and password");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         return;
@@ -53,7 +53,7 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
                     strncpy(client.role, role_start, sizeof(client.role) - 1);
                     client.role[sizeof(client.role) - 1] = '\0';
                     
-                    printf("[INFO] Logged in as '%s' with role '%s'\n", username, client.role);
+                    /* login successful; UI shows user info, no console log needed */
                 } else {
                     // Default role if not provided
                     strcpy(client.role, "user");
@@ -67,9 +67,9 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
     else
     {
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                   "❌ Login failed");
+                                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                       GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                                                       "Login failed");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
@@ -84,9 +84,9 @@ void on_register_clicked(GtkWidget *widget, gpointer data)
     if (strlen(username) < 3 || strlen(password) < 3)
     {
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-                                                   "⚠️ Min 3 characters");
+                               GTK_DIALOG_DESTROY_WITH_PARENT,
+                               GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+                               "Min 3 characters");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         return;
@@ -102,18 +102,18 @@ void on_register_clicked(GtkWidget *widget, gpointer data)
     if (n > 0 && strstr(buffer, "REGISTER_OK"))
     {
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                   "✅ Registered! Please login.");
+                               GTK_DIALOG_DESTROY_WITH_PARENT,
+                               GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+                               "Registered! Please login.");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
     else
     {
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                   "❌ Registration failed");
+                               GTK_DIALOG_DESTROY_WITH_PARENT,
+                               GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                               "Registration failed");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }
@@ -136,21 +136,21 @@ void create_login_screen()
     gtk_widget_set_margin_bottom(vbox, 40);
 
     GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='32768'>🎓 ONLINE QUIZ SYSTEM</span>");
+    gtk_label_set_markup(GTK_LABEL(title), "<span foreground='#2c3e50' weight='bold' size='32768'>ONLINE QUIZ SYSTEM</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 10);
 
     GtkWidget *sep1 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep1, FALSE, FALSE, 0);
 
     GtkWidget *username_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(username_label), "<span foreground='#34495e' weight='bold' size='12000'>📧 Username:</span>");
+    gtk_label_set_markup(GTK_LABEL(username_label), "<span foreground='#34495e' weight='bold' size='12000'>Username:</span>");
     GtkWidget *username_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(username_entry), "Enter username");
     gtk_box_pack_start(GTK_BOX(vbox), username_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), username_entry, FALSE, FALSE, 0);
 
     GtkWidget *password_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(password_label), "<span foreground='#34495e' weight='bold' size='12000'>🔐 Password:</span>");
+    gtk_label_set_markup(GTK_LABEL(password_label), "<span foreground='#34495e' weight='bold' size='12000'>Password:</span>");
     GtkWidget *password_entry = gtk_entry_new();
     gtk_entry_set_visibility(GTK_ENTRY(password_entry), FALSE);
     gtk_entry_set_placeholder_text(GTK_ENTRY(password_entry), "Enter password");
@@ -161,8 +161,8 @@ void create_login_screen()
     gtk_box_pack_start(GTK_BOX(vbox), sep2, FALSE, FALSE, 10);
 
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 15);
-    GtkWidget *login_btn = gtk_button_new_with_label("🔓 LOGIN");
-    GtkWidget *register_btn = gtk_button_new_with_label("✏️ REGISTER");
+    GtkWidget *login_btn = gtk_button_new_with_label("LOGIN");
+    GtkWidget *register_btn = gtk_button_new_with_label("REGISTER");
 
     gtk_widget_set_name(login_btn, "login_btn");
     gtk_widget_set_name(register_btn, "register_btn");

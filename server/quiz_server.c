@@ -60,7 +60,7 @@ int main()
         return 1;
     }
 
-    printf("Server started on port %d\n", PORT);
+    LOG_INFO("Server started on port %d", PORT);
 
     while (1)
     {
@@ -78,7 +78,7 @@ int main()
             continue;
         }
 
-        printf("New client connected: %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        LOG_INFO("New client connected: %s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
         if (pthread_create(&thread_id, NULL, handle_client, (void *)client_socket) != 0)
         {
             perror("pthread_create failed");

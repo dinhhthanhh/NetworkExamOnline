@@ -71,19 +71,19 @@ void register_user(int socket_fd, char *username, char *password)
       server_data.users[idx].socket_fd = -1;
       server_data.user_count++;
 
-      printf("User registered: %s (ID: %d)\n", username, server_data.users[idx].user_id);
+      LOG_INFO("User registered: %s (ID: %d)", username, server_data.users[idx].user_id);
     }
     else
     {
       snprintf(response, sizeof(response), "REGISTER_FAIL|Username already exists\n");
-      fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+      LOG_ERROR("SQL error: %s", sqlite3_errmsg(db));
     }
     sqlite3_finalize(stmt);
   }
   else
   {
     snprintf(response, sizeof(response), "REGISTER_FAIL|Database error\n");
-    fprintf(stderr, "Prepare error: %s\n", sqlite3_errmsg(db));
+    LOG_ERROR("Prepare error: %s", sqlite3_errmsg(db));
   }
 
   pthread_mutex_unlock(&server_data.lock);

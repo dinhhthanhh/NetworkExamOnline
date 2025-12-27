@@ -1,10 +1,11 @@
 
 CC = gcc
-CFLAGS = `pkg-config --cflags gtk+-3.0` -Wall -g -I./include
+CFLAGS = `pkg-config --cflags gtk+-3.0` -Wall -g -I. -I./include
 LIBS = `pkg-config --libs gtk+-3.0` -lpthread
 
-SRCS = main.c ui.c net.c ui_utils.c auth_ui.c room_ui.c stats_ui.c admin_ui.c practice_ui.c exam_ui.c
-OBJS = $(SRCS:.c=.o)
+# Compile main, network and utilities + everything under screens/
+SRCS = main.c net.c ui_utils.c admin_ui.c auth_ui.c exam_ui.c practice_ui.c room_ui.c stats_ui.c ui.c
+OBJS = $(patsubst %.c,%.o,$(SRCS))
 
 quiz_client: $(OBJS)
 	$(CC) $(CFLAGS) -o quiz_client $(OBJS) $(LIBS)

@@ -8,6 +8,19 @@
 #include <sqlite3.h>
 #include <pthread.h>
 
+// Simple logging helpers
+#ifndef LOG_INFO
+#define LOG_INFO(fmt, ...) fprintf(stderr, "[INFO] " fmt "\n", ##__VA_ARGS__)
+#endif
+#ifndef LOG_ERROR
+#define LOG_ERROR(fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
+#endif
+#ifndef LOG_DEBUG
+// Always enable debug logging so incoming commands and protocol messages
+// are visible on the server terminal (helps debugging protocol).
+#define LOG_DEBUG(fmt, ...) fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__)
+#endif
+
 #define PORT 8888
 #define MAX_CLIENTS 100
 #define BUFFER_SIZE 4096

@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
     // 👉 Đặt timeout sau khi kết nối thành công
     net_set_timeout(client.socket_fd);
 
-    printf("Connected to server.\n");
+    /* Connection established; keep UI message minimal */
 
     main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(main_window), "Online Quiz System");

@@ -41,8 +41,7 @@ void create_main_menu()
     int is_admin = (strcmp(client.role, "admin") == 0);
 
     GtkWidget *welcome_label = gtk_label_new(NULL);
-    gchar *welcome_text = g_strdup_printf("%s Welcome, <b>%s</b>!",
-                                          is_admin ? "👑" : "👤",
+    gchar *welcome_text = g_strdup_printf("Welcome, <b>%s</b>!",
                                           client.username[0] ? client.username : "User");
     gtk_label_set_markup(GTK_LABEL(welcome_label), welcome_text);
     g_free(welcome_text);
@@ -62,10 +61,10 @@ void create_main_menu()
 
     if (is_admin) {
         // ========== ADMIN MENU ==========
-        GtkWidget *create_room_btn = gtk_button_new_with_label("➕ Create Room");
-        GtkWidget *add_question_btn = gtk_button_new_with_label("📚 Add Questions");
-        GtkWidget *manage_rooms_btn = gtk_button_new_with_label("🏢 Manage Rooms");
-        GtkWidget *logout_btn = gtk_button_new_with_label("🚪 Logout");
+        GtkWidget *create_room_btn = gtk_button_new_with_label("Create Room");
+        GtkWidget *add_question_btn = gtk_button_new_with_label("Add Questions");
+        GtkWidget *manage_rooms_btn = gtk_button_new_with_label("Manage Rooms");
+        GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
 
         style_button(create_room_btn, "#27ae60");
         style_button(add_question_btn, "#16a085");
@@ -84,11 +83,11 @@ void create_main_menu()
         g_signal_connect(logout_btn, "clicked", G_CALLBACK(create_login_screen), NULL);
     } else {
         // ========== USER MENU ==========
-        GtkWidget *test_mode_btn = gtk_button_new_with_label("📝 Test Mode");
-        GtkWidget *practice_btn = gtk_button_new_with_label("🎯 Practice Mode");
-        GtkWidget *stats_btn = gtk_button_new_with_label("📊 My Statistics");
-        GtkWidget *leaderboard_btn = gtk_button_new_with_label("🏆 Leaderboard");
-        GtkWidget *logout_btn = gtk_button_new_with_label("🚪 Logout");
+        GtkWidget *test_mode_btn = gtk_button_new_with_label("Test Mode");
+        GtkWidget *practice_btn = gtk_button_new_with_label("Practice Mode");
+        GtkWidget *stats_btn = gtk_button_new_with_label("My Statistics");
+        GtkWidget *leaderboard_btn = gtk_button_new_with_label("Leaderboard");
+        GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
 
         style_button(test_mode_btn, "#3498db");
         style_button(practice_btn, "#9b59b6");

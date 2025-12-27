@@ -18,8 +18,8 @@ void handle_begin_practice(int socket_fd, int user_id, int room_id)
 
     // Lấy 10 câu hỏi random từ database
     snprintf(query, sizeof(query),
-             "SELECT id, question_text, option_a, option_b, option_c, option_d "
-             "FROM questions ORDER BY RANDOM() LIMIT 10;");
+         "SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer "
+         "FROM questions ORDER BY RANDOM() LIMIT 10;");
 
     pthread_mutex_lock(&server_data.lock);
 
@@ -62,6 +62,7 @@ void handle_begin_practice(int socket_fd, int user_id, int room_id)
         const char *opt_b = (const char *)sqlite3_column_text(stmt, 3);
         const char *opt_c = (const char *)sqlite3_column_text(stmt, 4);
         const char *opt_d = (const char *)sqlite3_column_text(stmt, 5);
+        int correct = sqlite3_column_int(stmt, 6);
 
         // Lưu question vào practice_questions
         char insert_q[512];
@@ -72,8 +73,8 @@ void handle_begin_practice(int socket_fd, int user_id, int room_id)
 
         // Append vào response
         char q_data[1024];
-        snprintf(q_data, sizeof(q_data), "|%d:%s:%s:%s:%s:%s",
-                 q_id, text, opt_a, opt_b, opt_c, opt_d);
+        snprintf(q_data, sizeof(q_data), "|%d:%s:%s:%s:%s:%s:%d",
+           q_id, text, opt_a, opt_b, opt_c, opt_d, correct);
         strcat(response, q_data);
 
         question_count++;
@@ -85,8 +86,7 @@ void handle_begin_practice(int socket_fd, int user_id, int room_id)
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
 
-    printf("[PRACTICE] User %d started practice session %d with %d questions\n",
-           user_id, session_id, question_count);
+    LOG_INFO("PRACTICE: User %d started practice session %d with %d questions", user_id, session_id, question_count);
 }
 
 void save_practice_answer(int socket_fd, int user_id, int question_id, int answer)
@@ -236,15 +236,14 @@ int time_taken = 0;
         }
         sqlite3_finalize(tstmt);
     } else {
-        fprintf(stderr, "SQL Error (Time Calc): %s\n", sqlite3_errmsg(db));
+      LOG_ERROR("SQL Error (Time Calc): %s", sqlite3_errmsg(db));
     }
 }
   snprintf(response, sizeof(response), "PRACTICE_RESULT|%d|%d|%d\n",
            score, total, time_taken);
   send(socket_fd, response, strlen(response), 0);
 
-  printf("[PRACTICE] User %d submitted session %d: %d/%d\n",
-         user_id, session_id, score, total);
+  LOG_INFO("PRACTICE: User %d submitted session %d: %d/%d", user_id, session_id, score, total);
   // Log practice submission
   {
     char details[128];

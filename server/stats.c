@@ -54,7 +54,7 @@ void get_leaderboard(int socket_fd, int limit)
 
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "DB error: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("DB error: %s", sqlite3_errmsg(db));
         send(socket_fd, "LEADERBOARD_FAIL\n", 17, 0);
         return;
     }

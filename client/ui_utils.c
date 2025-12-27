@@ -1,5 +1,6 @@
 #include "ui_utils.h"
 #include <string.h>
+#include <glib.h>
 
 void show_view(GtkWidget *view)
 {
@@ -160,7 +161,7 @@ gboolean update_timer(gpointer data)
         int mins = time_remaining / 60;
         int secs = time_remaining % 60;
         char time_str[50];
-        snprintf(time_str, sizeof(time_str), "⏱️ Time: %02d:%02d", mins, secs);
+        snprintf(time_str, sizeof(time_str), " Time: %02d:%02d", mins, secs);
         gtk_label_set_text(GTK_LABEL(timer_label), time_str);
         if (time_remaining == 0)
         {
@@ -171,4 +172,19 @@ gboolean update_timer(gpointer data)
         return TRUE;
     }
     return FALSE;
+}
+
+char *difficulty_markup(const char *difficulty) {
+    if (!difficulty || difficulty[0] == '\0')
+        return g_strdup("");
+
+    if (g_strcmp0(difficulty, "Easy") == 0) {
+        return g_strdup("<span foreground='#27ae60' weight='bold'>[Easy]</span>");
+    } else if (g_strcmp0(difficulty, "Medium") == 0) {
+        return g_strdup("<span foreground='#3498db' weight='bold'>[Medium]</span>");
+    } else if (g_strcmp0(difficulty, "Hard") == 0) {
+        return g_strdup("<span foreground='#e74c3c' weight='bold'>[Hard]</span>");
+    }
+
+    return g_strdup_printf("<span weight='bold'>[%s]</span>", difficulty);
 }

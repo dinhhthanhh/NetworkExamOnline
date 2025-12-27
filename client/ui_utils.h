@@ -19,6 +19,9 @@ void setup_leaderboard_css(void);
 // Timer
 gboolean update_timer(gpointer data);
 
+// Return a markup string for difficulty label (must be freed with g_free)
+char *difficulty_markup(const char *difficulty);
+
 // External global variables needed
 extern GtkWidget *current_view;
 extern GtkWidget *main_window;

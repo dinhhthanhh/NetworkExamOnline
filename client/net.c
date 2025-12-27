@@ -8,6 +8,7 @@
 
 #include "include/client_common.h"
 
+// Enable network debug by default so send/receive are visible in terminal
 static int net_debug_enabled = 1;  // 1: bật, 0: tắt
 
 // Hàm bật/tắt debug
@@ -32,7 +33,7 @@ static void print_debug(const char *direction, const char *message, int strip_ne
         }
     }
     
-    printf("%s %s\n", direction, debug_msg);
+    fprintf(stderr, "%s %s\n", direction, debug_msg);
 }
 
 void net_set_timeout(int sockfd) {
@@ -69,7 +70,7 @@ void flush_socket_buffer(int sockfd) {
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     
     if (flushed > 0 && net_debug_enabled) {
-        printf("[FLUSH] Cleared %d stale buffers\n", flushed);
+        fprintf(stderr, "[FLUSH] Cleared %d stale buffers\n", flushed);
     }
 }
 
@@ -83,14 +84,14 @@ void send_message(const char *msg) {
         ssize_t s = send(client.socket_fd, msg, strlen(msg), 0);
         (void)s;
     } else if (net_debug_enabled) {
-        printf("Cannot send: socket not connected\n");
+        fprintf(stderr, "Cannot send: socket not connected\n");
     }
 }
 
 ssize_t receive_message(char *buffer, size_t bufsz) {
     if (client.socket_fd <= 0) {
         if (net_debug_enabled) {
-            printf("Cannot receive: socket not connected\n");
+            fprintf(stderr, "Cannot receive: socket not connected\n");
         }
         return -1;
     }
@@ -108,7 +109,7 @@ ssize_t receive_message(char *buffer, size_t bufsz) {
     } else if (n == 0) {
         buffer[0] = '\0';
         if (net_debug_enabled) {
-            printf("Receive: Connection closed by server\n");
+            fprintf(stderr, "Receive: Connection closed by server\n");
         }
     } else {
         // n < 0: lỗi

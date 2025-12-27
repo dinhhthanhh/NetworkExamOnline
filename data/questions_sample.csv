@@ -1,16 +1,39 @@
 question_text,option_a,option_b,option_c,option_d,correct_answer,difficulty,category
-What is 2+2?,2,3,4,5,2,Easy,Math
-What is the capital of France?,London,Paris,Berlin,Madrid,1,Easy,Geography
-Who wrote Romeo and Juliet?,Charles Dickens,William Shakespeare,Mark Twain,Leo Tolstoy,1,Easy,Literature
-What is the chemical symbol for water?,H2O,CO2,NaCl,O2,0,Easy,Science
-How many continents are there?,5,6,7,8,2,Easy,Geography
-What is 15 * 8?,100,110,120,130,2,Medium,Math
-Which planet is closest to the sun?,Venus,Mercury,Earth,Mars,1,Medium,Science
-Who painted the Mona Lisa?,Vincent van Gogh,Leonardo da Vinci,Pablo Picasso,Claude Monet,1,Medium,Art
-What year did World War II end?,1943,1944,1945,1946,2,Medium,History
-What is the largest ocean?,Atlantic,Indian,Arctic,Pacific,3,Medium,Geography
-What is the derivative of x²?,x,2x,x²,2,1,Hard,Math
-What is the speed of light?,299792 km/s,300000 km/s,250000 km/s,350000 km/s,0,Hard,Science
-Who developed the theory of relativity?,Isaac Newton,Albert Einstein,Stephen Hawking,Nikola Tesla,1,Hard,Science
-What is the capital of Australia?,Sydney,Melbourne,Canberra,Brisbane,2,Hard,Geography
-In what year was the United Nations founded?,1942,1944,1945,1947,2,Hard,History
+What is 2+2?,2,3,4,5,3,Easy,Math
+What is the capital of France?,London,Paris,Berlin,Madrid,2,Easy,Geography
+Who wrote Romeo and Juliet?,Charles Dickens,William Shakespeare,Mark Twain,Leo Tolstoy,2,Easy,Literature
+What is the chemical symbol for water?,H2O,CO2,NaCl,O2,1,Easy,Science
+How many continents are there?,5,6,7,8,3,Easy,Geography
+What is 15 * 8?,100,110,120,130,3,Medium,Math
+Which planet is closest to the sun?,Venus,Mercury,Earth,Mars,2,Medium,Science
+Who painted the Mona Lisa?,Vincent van Gogh,Leonardo da Vinci,Pablo Picasso,Claude Monet,2,Medium,Art
+What year did World War II end?,1943,1944,1945,1946,3,Medium,History
+What is the largest ocean?,Atlantic,Indian,Arctic,Pacific,4,Medium,Geography
+What is the derivative of x^2?,x,2x,x^2,2,2,Hard,Math
+What is the speed of light (vacuum)?,299792 km/s,300000 km/s,250000 km/s,350000 km/s,1,Hard,Science
+Who developed the theory of relativity?,Isaac Newton,Albert Einstein,Stephen Hawking,Nikola Tesla,2,Hard,Science
+What is the capital of Australia?,Sydney,Melbourne,Canberra,Brisbane,3,Hard,Geography
+In what year was the United Nations founded?,1942,1944,1945,1947,3,Hard,History
+What corresponds to 1 byte?,4 bits,8 bits,16 bits,32 bits,2,Easy,Technology
+Who is the creator of C language?,Bjarne Stroustrup,James Gosling,Dennis Ritchie,Guido van Rossum,3,Medium,Technology
+Which data type is used to store text in C?,int,float,char,double,3,Easy,Technology
+What is the size of 'int' on most 32-bit systems?,1 byte,2 bytes,4 bytes,8 bytes,3,Medium,Technology
+What symbol is used for pointers in C?,&,*,#,->,2,Medium,Technology
+Which command is used to compile C code in Linux?,python,javac,gcc,c++,3,Easy,Technology
+What is the binary representation of 5?,100,101,110,111,2,Medium,Math
+What is the capital of Vietnam?,Ho Chi Minh City,Da Nang,Hanoi,Hue,3,Easy,Geography
+What is the chemical symbol for Gold?,Ag,Au,Fe,Cu,2,Medium,Science
+Which organ pumps blood in the human body?,Brain,Lungs,Heart,Liver,3,Easy,Science
+What does HTTP stand for?,HyperText Transfer Protocol,High Transfer Text Protocol,HyperText Test Protocol,Hyper Transfer Text Protocol,1,Medium,Technology
+Which port is standard for Web (HTTP)?,21,22,80,443,3,Medium,Technology
+What is the output of 10 % 3 in C?,0,1,2,3,2,Easy,Technology
+In C arrays start at index?,1,0,-1,depends on compiler,2,Easy,Technology
+Which planet is known as the Red Planet?,Venus,Mars,Jupiter,Saturn,2,Easy,Science
+What is the boiling point of water?,90 C,100 C,110 C,120 C,2,Easy,Science
+What does SQL stand for?,Structured Question Language,Strong Query Language,Structured Query Language,Structured Query List,3,Medium,Technology
+Which command lists files in Linux?,cd,ls,mkdir,rm,2,Easy,Technology
+What is the square root of 144?,10,11,12,13,3,Easy,Math
+Which country has the most population (2024)?,India,China,USA,Indonesia,1,Medium,Geography
+What is the atomic number of Carbon?,4,5,6,7,3,Medium,Science
+What is 25 * 4?,80,90,100,110,3,Easy,Math
+What does HTML stand for?,HyperText Markup Language,High Tech Modern Language,Home Tool Markup Language,Hyperlinks and Text Markup Language,1,Easy,Technology

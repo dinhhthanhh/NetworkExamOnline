@@ -27,11 +27,42 @@ void *handle_client(void *arg)
 
     if (n <= 0)
     {
-      if (user_id > 0 && current_room_id > 0)
-      {
-        printf("[DISCONNECT] User %d disconnected from room %d (session preserved for resume)\n", 
-               user_id, current_room_id);
+      // Client closed connection or error
+      if (user_id > 0) {
+        LOG_INFO("DISCONNECT: User %d disconnected", user_id);
+
+        // If user was in a room, attempt auto-submit using existing logic
+        if (current_room_id > 0) {
+          LOG_INFO("User %d was in room %d — triggering auto-submit and notifying others", user_id, current_room_id);
+          // Run auto-submit handler (will guard against double submits)
+          auto_submit_on_disconnect(user_id, current_room_id);
+        }
+
+        // Mark user offline and clear their socket
+        pthread_mutex_lock(&server_data.lock);
+        for (int i = 0; i < server_data.user_count; i++) {
+          if (server_data.users[i].user_id == user_id) {
+            server_data.users[i].is_online = 0;
+            server_data.users[i].socket_fd = -1;
+            break;
+          }
+        }
+
+        // Notify other connected clients that this user disconnected
+        char notify[128];
+        snprintf(notify, sizeof(notify), "USER_DISCONNECTED|%d\n", user_id);
+        for (int i = 0; i < server_data.user_count; i++) {
+          if (server_data.users[i].is_online && server_data.users[i].socket_fd > 0) {
+            ssize_t s = send(server_data.users[i].socket_fd, notify, strlen(notify), 0);
+            (void)s;
+            LOG_INFO("Notified user %d about disconnect of user %d", server_data.users[i].user_id, user_id);
+          }
+        }
+        pthread_mutex_unlock(&server_data.lock);
+      } else {
+        LOG_INFO("Connection closed (no authenticated user)");
       }
+
       break;
     }
 
@@ -43,7 +74,7 @@ void *handle_client(void *arg)
       buffer[len - 1] = '\0';
     }
 
-    printf("Received: %s\n", buffer);
+    LOG_DEBUG("Received: %s", buffer);
 
     char *cmd = strtok(buffer, "|");
     if (cmd == NULL)

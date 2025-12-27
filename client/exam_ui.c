@@ -2,6 +2,7 @@
 #include "net.h"
 #include "room_ui.h"
 #include "ui.h"
+#include "ui_utils.h"
 #include <gtk/gtk.h>
 #include <time.h>
 
@@ -24,6 +25,7 @@ typedef struct {
     int question_id;
     char text[512];
     char options[4][128];
+    char difficulty[32];
 } Question;
 
 static Question *questions = NULL;
@@ -50,8 +52,8 @@ static gboolean auto_submit_wrapper(gpointer data) {
     return FALSE; // Chạy 1 lần rồi thôi
 }
 
-// Timer callback - đếm ngược
-static gboolean update_timer(gpointer data) {
+// Timer callback - đếm ngược (exam-specific)
+static gboolean exam_update_timer(gpointer data) {
     if (!exam_start_time || is_submitting) return FALSE;
     
     time_t now = time(NULL);
@@ -62,7 +64,7 @@ static gboolean update_timer(gpointer data) {
         // Hết giờ - Set timer label về 00:00
         if (timer_label) {
             gtk_label_set_markup(GTK_LABEL(timer_label), 
-                            "<span foreground='red' size='16000' weight='bold'>⏰ 00:00</span>");
+                            "<span foreground='red' size='16000' weight='bold'> 00:00</span>");
         }
 
         timer_id = 0; 
@@ -77,9 +79,9 @@ static gboolean update_timer(gpointer data) {
     
     char timer_text[128];
     const char *color = (remaining < 300) ? "red" : "#2c3e50";
-    snprintf(timer_text, sizeof(timer_text),
-             "<span foreground='%s' size='16000' weight='bold'>⏱️ %02d:%02d</span>",
-             color, minutes, seconds);
+        snprintf(timer_text, sizeof(timer_text),
+                 "<span foreground='%s' size='16000' weight='bold'>Time %02d:%02d</span>",
+                 color, minutes, seconds);
     
     if (timer_label) {
         gtk_label_set_markup(GTK_LABEL(timer_label), timer_text);
@@ -145,7 +147,8 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
 
     // 2. Kiểm tra room ID trước khi submit
     if (exam_room_id == 0) {
-        printf("[ERROR] Exam Room ID is 0! Cannot submit properly.\n");
+        show_error_dialog("Internal Error", "Invalid exam room ID. Submit aborted.");
+        return;
     }
 
     int submit_room_id = exam_room_id;
@@ -166,10 +169,11 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
             }
         }
 
+        int unanswered = total_questions - answered;
         char confirm_msg[256];
         snprintf(confirm_msg, sizeof(confirm_msg),
-                 "You have answered %d/%d questions.\nAre you sure you want to submit?",
-                 answered, total_questions);
+             "You have answered %d/%d questions. Unanswered: %d.\nAre you sure you want to submit?",
+             answered, total_questions, unanswered);
 
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_MODAL,
@@ -180,10 +184,10 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
         int response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
 
-        if (response != GTK_RESPONSE_YES) {
+            if (response != GTK_RESPONSE_YES) {
             // User cancelled - restart timer if there's remaining time
             if (exam_start_time > 0) {
-                timer_id = g_timeout_add(1000, update_timer, NULL);
+                timer_id = g_timeout_add(1000, exam_update_timer, NULL);
             }
             return;
         }
@@ -233,7 +237,7 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
             GTK_DIALOG_MODAL,
             GTK_MESSAGE_INFO,
             GTK_BUTTONS_OK,
-            widget != NULL ? "⏰ TIME'S UP!" : "✅ Exam Submitted!");
+            widget != NULL ? " TIME'S UP!" : " Exam Submitted!");
         
         gtk_message_dialog_format_secondary_text(
             GTK_MESSAGE_DIALOG(result_dialog),
@@ -250,7 +254,7 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
             GTK_DIALOG_MODAL,
             GTK_MESSAGE_ERROR,
             GTK_BUTTONS_OK,
-            "❌ Submit failed");
+            " Submit failed");
         
         if (n > 0) {
             gtk_message_dialog_format_secondary_text(
@@ -316,7 +320,7 @@ void create_exam_page(int room_id) {
             GTK_DIALOG_MODAL,
             GTK_MESSAGE_ERROR,
             GTK_BUTTONS_OK,
-            "❌ Cannot start exam");
+            " Cannot start exam");
         
         if (n > 0 && strncmp(buffer, "ERROR", 5) == 0) {
             char *msg_ptr = strchr(buffer, '|');
@@ -368,7 +372,7 @@ void create_exam_page(int room_id) {
             GTK_DIALOG_MODAL,
             GTK_MESSAGE_ERROR,
             GTK_BUTTONS_OK,
-            "❌ No questions in this room");
+            " No questions in this room");
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         return;
@@ -409,6 +413,14 @@ void create_exam_page(int room_id) {
                 strcpy(questions[q_idx].options[i], "???");
             }
         }
+
+        // Difficulty (optional)
+        char *diff = safe_strtok(&q_ptr, ":");
+        if (diff) {
+            strncpy(questions[q_idx].difficulty, diff, sizeof(questions[q_idx].difficulty)-1);
+        } else {
+            questions[q_idx].difficulty[0] = '\0';
+        }
         
         // Question parsed
         q_idx++;
@@ -435,7 +447,7 @@ void create_exam_page(int room_id) {
     
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-                        "<span size='20000' weight='bold'>📝 EXAM</span>");
+                        "<span size='20000' weight='bold'>EXAM</span>");
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
     
     timer_label = gtk_label_new(NULL);
@@ -472,10 +484,16 @@ void create_exam_page(int room_id) {
         gtk_widget_set_margin_start(q_vbox, 15);
         gtk_widget_set_margin_end(q_vbox, 15);
         
-        // Question text
-        char q_text[600];
-        snprintf(q_text, sizeof(q_text), 
-                "<b>%d. %s</b>", i + 1, questions[i].text);
+        // Question text + difficulty
+        char q_text[700];
+        if (questions[i].difficulty[0] != '\0') {
+                char *diff_markup = difficulty_markup(questions[i].difficulty);
+                snprintf(q_text, sizeof(q_text), "<b>%d. %s</b> %s",
+                    i + 1, questions[i].text, diff_markup);
+                g_free(diff_markup);
+        } else {
+            snprintf(q_text, sizeof(q_text), "<b>%d. %s</b>", i + 1, questions[i].text);
+        }
         GtkWidget *q_label = gtk_label_new(NULL);
         gtk_label_set_markup(GTK_LABEL(q_label), q_text);
         gtk_label_set_xalign(GTK_LABEL(q_label), 0);
@@ -513,7 +531,7 @@ void create_exam_page(int room_id) {
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
     
     // Submit button
-    GtkWidget *submit_btn = gtk_button_new_with_label("📤 SUBMIT EXAM");
+    GtkWidget *submit_btn = gtk_button_new_with_label("SUBMIT EXAM");
     gtk_widget_set_size_request(submit_btn, 200, 50);
     g_signal_connect(submit_btn, "clicked", G_CALLBACK(on_submit_exam_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit_btn, FALSE, FALSE, 0);
@@ -522,11 +540,11 @@ void create_exam_page(int room_id) {
     show_view(vbox);
     
     // Start timer
-    timer_id = g_timeout_add(1000, update_timer, NULL);
+    timer_id = g_timeout_add(1000, exam_update_timer, NULL);
     return;
 
 parse_error:
-    printf("[ERROR] Failed to parse exam data\n");
+    show_error_dialog("Error", "Failed to parse exam data");
     if (buffer_copy) free(buffer_copy);
     cleanup_exam_ui();
     
@@ -535,7 +553,7 @@ parse_error:
         GTK_DIALOG_MODAL,
         GTK_MESSAGE_ERROR,
         GTK_BUTTONS_OK,
-        "❌ Failed to parse exam data");
+        " Failed to parse exam data");
     gtk_dialog_run(GTK_DIALOG(error_dialog));
     gtk_widget_destroy(error_dialog);
 }
@@ -702,7 +720,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
 
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title),
-                         "<span size='20000' weight='bold'>📝 EXAM (RESUMED)</span>");
+                         "<span size='20000' weight='bold'>EXAM (RESUMED)</span>");
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
 
     timer_label = gtk_label_new(NULL);
@@ -780,7 +798,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
 
     GtkWidget *submit =
-        gtk_button_new_with_label("📤 SUBMIT EXAM");
+        gtk_button_new_with_label("SUBMIT EXAM");
     g_signal_connect(submit, "clicked",
                      G_CALLBACK(on_submit_exam_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit, FALSE, FALSE, 0);
@@ -788,7 +806,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     // Use show_view so current_view is tracked correctly
     show_view(vbox);
 
-    timer_id = g_timeout_add(1000, update_timer, NULL);
+    timer_id = g_timeout_add(1000, exam_update_timer, NULL);
 
     free(buffer_copy);
     return;
@@ -802,7 +820,7 @@ parse_error:
         GTK_DIALOG_MODAL,
         GTK_MESSAGE_ERROR,
         GTK_BUTTONS_OK,
-        "❌ Failed to resume exam");
+        " Failed to resume exam");
     gtk_dialog_run(GTK_DIALOG(err));
     gtk_widget_destroy(err);
 }

@@ -134,8 +134,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
            room_name, room_id, time_limit);
   log_activity(creator_id, "CREATE_ROOM", log_details);
 
-  printf("[INFO] User %d created room '%s' (ID=%d)\n", 
-         creator_id, room_name, room_id);
+    LOG_INFO("User %d created room '%s' (ID=%d)", creator_id, room_name, room_id);
   
   server_data.room_count++;
   pthread_mutex_unlock(&server_data.lock);
@@ -339,7 +338,7 @@ void join_test_room(int socket_fd, int user_id, int room_id)
   snprintf(log_details, sizeof(log_details), "Joined room ID=%d", room_id);
   log_activity(user_id, "JOIN_ROOM", log_details);
   
-  printf("[INFO] User %d joined room %d\n", user_id, room_id);
+  LOG_INFO("User %d joined room %d", user_id, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -401,8 +400,7 @@ void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_atte
            "SET_MAX_ATTEMPTS_OK|%d|%d\n", room_id, max_attempts);
   send(socket_fd, response, strlen(response), 0);
   
-  printf("[INFO] Room %d max_attempts set to %d by user %d\n", 
-         room_id, max_attempts, user_id);
+    LOG_INFO("Room %d max_attempts set to %d by user %d", room_id, max_attempts, user_id);
   
   pthread_mutex_unlock(&server_data.lock);
 }
@@ -488,7 +486,7 @@ void close_room(int socket_fd, int user_id, int room_id)
   snprintf(log_details, sizeof(log_details), "Closed room ID=%d", room_id);
   log_activity(user_id, "CLOSE_ROOM", log_details);
   
-  printf("[INFO] User %d closed room %d\n", user_id, room_id);
+  LOG_INFO("User %d closed room %d", user_id, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -652,7 +650,7 @@ void start_test(int socket_fd, int user_id, int room_id)
   snprintf(log_details, sizeof(log_details), "Opened room ID=%d", room_id);
   log_activity(user_id, "START_ROOM", log_details);
   
-  printf("[INFO] User %d opened room %d\n", user_id, room_id);
+  LOG_INFO("User %d opened room %d", user_id, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -721,7 +719,7 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
   
   // Lấy danh sách câu hỏi
   const char *question_query = 
-    "SELECT id, question_text, option_a, option_b, option_c, option_d "
+    "SELECT id, question_text, option_a, option_b, option_c, option_d, difficulty "
     "FROM questions WHERE room_id = ?";
   
   if (sqlite3_prepare_v2(db, question_query, -1, &stmt, NULL) != SQLITE_OK)
@@ -746,10 +744,12 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
     const char *opt_b = (const char *)sqlite3_column_text(stmt, 3);
     const char *opt_c = (const char *)sqlite3_column_text(stmt, 4);
     const char *opt_d = (const char *)sqlite3_column_text(stmt, 5);
+    const char *difficulty = (const char *)sqlite3_column_text(stmt, 6);
     
     char q_entry[1024];
-    snprintf(q_entry, sizeof(q_entry), "|%d:%s:%s:%s:%s:%s",
-             q_id, q_text, opt_a, opt_b, opt_c, opt_d);
+    snprintf(q_entry, sizeof(q_entry), "|%d:%s:%s:%s:%s:%s:%s",
+         q_id, q_text, opt_a, opt_b, opt_c, opt_d,
+         difficulty ? difficulty : "");
     strcat(response, q_entry);
     question_count++;
   }
@@ -780,8 +780,7 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
   strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[INFO] User %d started exam in room %d (%d questions, %d min)\n", 
-           user_id, room_id, question_count, duration_minutes);
+        LOG_INFO("User %d started exam in room %d (%d questions, %d min)", user_id, room_id, question_count, duration_minutes);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -905,8 +904,7 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[INFO] User %d resumed exam in room %d (%ld seconds remaining)\n", 
-           user_id, room_id, remaining);
+        LOG_INFO("User %d resumed exam in room %d (%ld seconds remaining)", user_id, room_id, remaining);
     
     pthread_mutex_unlock(&server_data.lock);
 }

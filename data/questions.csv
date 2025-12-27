@@ -1,11 +1,31 @@
 question_text,option_a,option_b,option_c,option_d,correct_answer,difficulty,category
-2 + 2 = ?,3,4,5,6,1,easy,math
-What is the capital of France?,London,Paris,Berlin,Madrid,1,easy,geography
-15 * 8 = ?,100,110,120,130,2,medium,math
-Which planet is closest to the sun?,Venus,Mercury,Earth,Mars,1,medium,science
-What is the integral of sin(x)?,-cos(x),cos(x),sin(x),-sin(x),0,hard,math
-What is the square root of 144?,10,11,12,13,2,easy,math
-Which country has the most population?,India,China,USA,Indonesia,0,medium,geography
-What is the atomic number of Carbon?,4,5,6,7,2,medium,science
-What is 25 * 4?,80,90,100,110,2,easy,math
-What does HTML stand for?,HyperText Markup Language,High Tech Modern Language,Home Tool Markup Language,Hyperlinks and Text Markup Language,0,easy,technology
+2 + 2 = ?,3,4,5,6,2,easy,math
+What is the capital of France?,London,Paris,Berlin,Madrid,2,easy,geography
+15 * 8 = ?,100,110,120,130,3,medium,math
+Which planet is closest to the sun?,Venus,Mercury,Earth,Mars,2,medium,science
+What is the integral of sin(x)?,-cos(x),cos(x),sin(x),-sin(x),1,hard,math
+What is the square root of 144?,10,11,12,13,3,easy,math
+Which country has the most population (2024)?,India,China,USA,Indonesia,1,medium,geography
+What is the atomic number of Carbon?,4,5,6,7,3,medium,science
+What is 25 * 4?,80,90,100,110,3,easy,math
+What does HTML stand for?,HyperText Markup Language,High Tech Modern Language,Home Tool Markup Language,Hyperlinks and Text Markup Language,1,easy,technology
+Who is the creator of C language?,Bjarne Stroustrup,James Gosling,Dennis Ritchie,Guido van Rossum,3,medium,technology
+Which data type is used to store text in C?,int,float,char,double,3,easy,technology
+What is the size of 'int' on most 32-bit systems?,1 byte,2 bytes,4 bytes,8 bytes,3,medium,technology
+What symbol is used for pointers in C?,&,*,#,->,2,medium,technology
+Which command is used to compile C code in Linux?,python,javac,gcc,c++,3,easy,technology
+What is the binary representation of 5?,100,101,110,111,2,medium,math
+What is the capital of Vietnam?,Ho Chi Minh City,Da Nang,Hanoi,Hue,3,easy,geography
+Which ocean is the largest?,Atlantic,Indian,Arctic,Pacific,4,easy,geography
+How many continents are there on Earth?,5,6,7,8,3,easy,geography
+What is the chemical symbol for Gold?,Ag,Au,Fe,Cu,2,medium,science
+What is the speed of light (approx)?,300000 km/s,150000 km/s,1000 km/s,340 m/s,1,hard,science
+Which organ pumps blood in the human body?,Brain,Lungs,Heart,Liver,3,easy,science
+What does HTTP stand for?,HyperText Transfer Protocol,High Transfer Text Protocol,HyperText Test Protocol,Hyper Transfer Text Protocol,1,medium,technology
+Which port is standard for Web (HTTP)?,21,22,80,443,3,medium,technology
+What is the output of 10 % 3 in C?,0,1,2,3,2,easy,technology
+In C arrays start at index?,1,0,-1,depends on compiler,2,easy,technology
+Which planet is known as the Red Planet?,Venus,Mars,Jupiter,Saturn,2,easy,science
+What corresponds to 1 byte?,4 bits,8 bits,16 bits,32 bits,2,easy,technology
+Who painted the Mona Lisa?,Van Gogh,Picasso,Da Vinci,Michelangelo,3,medium,art
+What is the boiling point of water?,90 C,100 C,110 C,120 C,2,easy,science

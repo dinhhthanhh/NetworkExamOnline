@@ -140,6 +140,59 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   pthread_mutex_unlock(&server_data.lock);
 }
 
+void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_attempts)
+{
+  pthread_mutex_lock(&server_data.lock);
+  sqlite3_stmt *stmt;
+  const char *sql_check = "SELECT host_id FROM rooms WHERE id = ?;";
+  if (sqlite3_prepare_v2(db, sql_check, -1, &stmt, 0) != SQLITE_OK) {
+    send(socket_fd, "ERROR|Database error\n", 21, 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  sqlite3_bind_int(stmt, 1, room_id);
+  int rc = sqlite3_step(stmt);
+  if (rc != SQLITE_ROW) {
+    send(socket_fd, "ERROR|Room not found\n", 21, 0);
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  int host_id = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+
+  if (host_id != user_id) {
+    send(socket_fd, "ERROR|Only room host can set max attempts\n", 43, 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+
+  const char *update_query = "UPDATE rooms SET max_attempts = ? WHERE id = ?";
+  if (sqlite3_prepare_v2(db, update_query, -1, &stmt, NULL) != SQLITE_OK) {
+    send(socket_fd, "ERROR|Database error\n", 21, 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  sqlite3_bind_int(stmt, 1, max_attempts);
+  sqlite3_bind_int(stmt, 2, room_id);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    send(socket_fd, "ERROR|Failed to update\n", 23, 0);
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  sqlite3_finalize(stmt);
+
+  char response[128];
+  snprintf(response, sizeof(response), "SET_MAX_ATTEMPTS_OK|%d|%d\n", room_id, max_attempts);
+  send(socket_fd, response, strlen(response), 0);
+  char log_details[128];
+  snprintf(log_details, sizeof(log_details), "Max attempts set to %d for room %d", max_attempts, room_id);
+  log_activity(user_id, "SET_MAX_ATTEMPTS", log_details);
+  LOG_INFO("Room %d max_attempts set to %d by user %d", room_id, max_attempts, user_id);
+  pthread_mutex_unlock(&server_data.lock);
+}
+
 void list_test_rooms(int socket_fd)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -339,70 +392,83 @@ void join_test_room(int socket_fd, int user_id, int room_id)
   log_activity(user_id, "JOIN_ROOM", log_details);
   
   LOG_INFO("User %d joined room %d", user_id, room_id);
-  pthread_mutex_unlock(&server_data.lock);
-}
+  // Persist start_time/end_time and notify participants when starting the exam
+  {
+    // Determine duration for this room
+    int duration_minutes = 60;
+    const char *q = "SELECT duration FROM rooms WHERE id = ?";
+    if (sqlite3_prepare_v2(db, q, -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, room_id);
+      if (sqlite3_step(stmt) == SQLITE_ROW) {
+        duration_minutes = sqlite3_column_int(stmt, 0);
+      }
+      sqlite3_finalize(stmt);
+    }
 
-void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_attempts)
-{
-  pthread_mutex_lock(&server_data.lock);
-  
-  // Kiểm tra user có phải host không
-  const char *check_query = "SELECT host_id FROM rooms WHERE id = ?";
-  
-  sqlite3_stmt *stmt;
-  if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK)
-  {
-    send(socket_fd, "ERROR|Database error\n", 21, 0);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
+    time_t now = time(NULL);
+    time_t end_time = now + (duration_minutes * 60);
+
+    // Update rooms table with start/end times
+    const char *update_times_sql = "UPDATE rooms SET start_time = ?, end_time = ?, is_active = 1 WHERE id = ?";
+    if (sqlite3_prepare_v2(db, update_times_sql, -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_int64(stmt, 1, now);
+      sqlite3_bind_int64(stmt, 2, end_time);
+      sqlite3_bind_int(stmt, 3, room_id);
+      sqlite3_step(stmt);
+      sqlite3_finalize(stmt);
+    }
+
+    // Update all participants start_time
+    const char *update_part_start = "UPDATE participants SET start_time = ? WHERE room_id = ?";
+    if (sqlite3_prepare_v2(db, update_part_start, -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_int64(stmt, 1, now);
+      sqlite3_bind_int(stmt, 2, room_id);
+      sqlite3_step(stmt);
+      sqlite3_finalize(stmt);
+    }
+
+    // Create sessions row
+    const char *ins_session = "INSERT INTO sessions (room_id, start_time, end_time, is_active) VALUES (?, ?, ?, 1)";
+    if (sqlite3_prepare_v2(db, ins_session, -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, room_id);
+      sqlite3_bind_int64(stmt, 2, now);
+      sqlite3_bind_int64(stmt, 3, end_time);
+      sqlite3_step(stmt);
+      sqlite3_finalize(stmt);
+      long session_id = sqlite3_last_insert_rowid(db);
+
+      // Update participants.session_id for this room
+      const char *upd_part_session = "UPDATE participants SET session_id = ? WHERE room_id = ?";
+      sqlite3_stmt *ustmt;
+      if (sqlite3_prepare_v2(db, upd_part_session, -1, &ustmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int64(ustmt, 1, session_id);
+        sqlite3_bind_int(ustmt, 2, room_id);
+        sqlite3_step(ustmt);
+        sqlite3_finalize(ustmt);
+      }
+    }
+
+    // Notify connected participants: send START_EXAM|<end_time>\n
+    const char *select_participants = "SELECT user_id FROM participants WHERE room_id = ?";
+    if (sqlite3_prepare_v2(db, select_participants, -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, room_id);
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int p_uid = sqlite3_column_int(stmt, 0);
+        // find socket for user
+        for (int i = 0; i < server_data.user_count; i++) {
+          if (server_data.users[i].user_id == p_uid && server_data.users[i].is_online && server_data.users[i].socket_fd > 0) {
+            char notify[128];
+            snprintf(notify, sizeof(notify), "START_EXAM|%lld\n", (long long)end_time);
+            send(server_data.users[i].socket_fd, notify, strlen(notify), 0);
+          }
+        }
+      }
+      sqlite3_finalize(stmt);
+    }
   }
-  
-  sqlite3_bind_int(stmt, 1, room_id);
-  
-  int host_id = -1;
-  if (sqlite3_step(stmt) == SQLITE_ROW)
-  {
-    host_id = sqlite3_column_int(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-  
-  if (host_id != user_id)
-  {
-    send(socket_fd, "ERROR|Only room host can set max attempts\n", 43, 0);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  // Update max_attempts
-  const char *update_query = "UPDATE rooms SET max_attempts = ? WHERE id = ?";
-  
-  if (sqlite3_prepare_v2(db, update_query, -1, &stmt, NULL) != SQLITE_OK)
-  {
-    send(socket_fd, "ERROR|Database error\n", 21, 0);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  sqlite3_bind_int(stmt, 1, max_attempts);
-  sqlite3_bind_int(stmt, 2, room_id);
-  
-  if (sqlite3_step(stmt) != SQLITE_DONE)
-  {
-    send(socket_fd, "ERROR|Failed to update\n", 23, 0);
-    sqlite3_finalize(stmt);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  sqlite3_finalize(stmt);
-  
-  char response[128];
-  snprintf(response, sizeof(response), 
-           "SET_MAX_ATTEMPTS_OK|%d|%d\n", room_id, max_attempts);
-  send(socket_fd, response, strlen(response), 0);
-  
-    LOG_INFO("Room %d max_attempts set to %d by user %d", room_id, max_attempts, user_id);
-  
+
   pthread_mutex_unlock(&server_data.lock);
+  return;
 }
 
 void close_room(int socket_fd, int user_id, int room_id)
@@ -788,80 +854,59 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
 void handle_resume_exam(int socket_fd, int user_id, int room_id)
 {
     pthread_mutex_lock(&server_data.lock);
-    
-    // Kiểm tra user đã bắt đầu thi trong room này chưa
-    const char *check_query = "SELECT start_time FROM participants WHERE room_id = ? AND user_id = ?";
-    
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-        send(socket_fd, "ERROR|Database error\n", 21, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-
+  // Check for active session for this room
+  sqlite3_stmt *stmt;
+  const char *sel_session = "SELECT id, start_time, end_time FROM sessions WHERE room_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1";
+  int session_id = 0;
+  long start_time = 0;
+  long end_time = 0;
+  if (sqlite3_prepare_v2(db, sel_session, -1, &stmt, NULL) == SQLITE_OK) {
     sqlite3_bind_int(stmt, 1, room_id);
-    sqlite3_bind_int(stmt, 2, user_id);
-
-    long start_time = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        start_time = sqlite3_column_int64(stmt, 0);
+      session_id = sqlite3_column_int(stmt, 0);
+      start_time = sqlite3_column_int64(stmt, 1);
+      end_time = sqlite3_column_int64(stmt, 2);
     }
     sqlite3_finalize(stmt);
-    
-    // Nếu chưa bắt đầu hoặc start_time = 0
-    if (start_time == 0) {
-        send(socket_fd, "RESUME_NOT_STARTED\n", 19, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-    
-    // Kiểm tra đã submit chưa
-    const char *check_result = "SELECT id FROM results WHERE room_id = ? AND user_id = ?";
-    
-    if (sqlite3_prepare_v2(db, check_result, -1, &stmt, NULL) == SQLITE_OK) {
-        sqlite3_bind_int(stmt, 1, room_id);
-        sqlite3_bind_int(stmt, 2, user_id);
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            send(socket_fd, "RESUME_ALREADY_SUBMITTED\n", 25, 0);
-            sqlite3_finalize(stmt);
-            pthread_mutex_unlock(&server_data.lock);
-            return;
-        }
-        sqlite3_finalize(stmt);
-    }
-    
-    // Lấy duration và tính thời gian còn lại
-    const char *room_query = "SELECT duration FROM rooms WHERE id = ?";
-    int duration_minutes = 60;
-    if (sqlite3_prepare_v2(db, room_query, -1, &stmt, NULL) == SQLITE_OK) {
-      sqlite3_bind_int(stmt, 1, room_id);
-      if (sqlite3_step(stmt) == SQLITE_ROW){
-        duration_minutes = sqlite3_column_int(stmt, 0);
-      }
+  }
+
+  if (session_id == 0) {
+    // No active session
+    send(socket_fd, "RESUME_NOT_STARTED\n", 19, 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+
+  // Check already submitted
+  const char *check_result = "SELECT id FROM results WHERE room_id = ? AND user_id = ?";
+  if (sqlite3_prepare_v2(db, check_result, -1, &stmt, NULL) == SQLITE_OK) {
+    sqlite3_bind_int(stmt, 1, room_id);
+    sqlite3_bind_int(stmt, 2, user_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+      send(socket_fd, "RESUME_ALREADY_SUBMITTED\n", 25, 0);
       sqlite3_finalize(stmt);
+      pthread_mutex_unlock(&server_data.lock);
+      return;
     }
-        
-    // Tính thời gian đã trôi qua
-    time_t now = time(NULL);
-    long elapsed = now - start_time;
-    long max_time = duration_minutes * 60;
-    long remaining = max_time - elapsed;
-    
-    // Nếu hết thời gian, auto submit
-    if (remaining <= 0) {
-        auto_submit_on_disconnect(user_id, room_id);
-        send(socket_fd, "RESUME_TIME_EXPIRED\n", 20, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-    
-    // Lấy danh sách câu hỏi và câu trả lời đã lưu
-    const char *question_query =
-      "SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, "
-      "ua.selected_answer FROM questions q "
-      "LEFT JOIN user_answers ua ON q.id = ua.question_id "
-      "AND ua.user_id = ? AND ua.room_id = ? "
-      "WHERE q.room_id = ?";
+    sqlite3_finalize(stmt);
+  }
+
+  // Calculate remaining based on session end_time
+  time_t now = time(NULL);
+  long remaining = end_time - now;
+  if (remaining <= 0) {
+    // auto-submit all for this user and inform
+    auto_submit_on_timeout(user_id, room_id);
+    send(socket_fd, "RESUME_TIME_EXPIRED\n", 20, 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+
+  // Fetch questions and any saved answers for this session
+  const char *question_query =
+    "SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, ua.selected_answer FROM questions q "
+    "LEFT JOIN user_answers ua ON q.id = ua.question_id AND ua.user_id = ? AND ua.session_id = ? "
+    "WHERE q.room_id = ?";
     
     if (sqlite3_prepare_v2(db, question_query, -1, &stmt, NULL) != SQLITE_OK) {
         send(socket_fd, "ERROR|Cannot load questions\n", 28, 0);
@@ -870,7 +915,7 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     }
 
     sqlite3_bind_int(stmt, 1, user_id);
-    sqlite3_bind_int(stmt, 2, room_id);
+    sqlite3_bind_int(stmt, 2, session_id);
     sqlite3_bind_int(stmt, 3, room_id);
     
     // Format: RESUME_EXAM_OK|remaining_seconds|q1_id:q1_text:optA:optB:optC:optD:saved_answer|...

@@ -27,20 +27,24 @@ void start_room_timer(int room_id, int time_limit)
 void broadcast_time_update(int room_id, int time_remaining)
 {
   pthread_mutex_lock(&server_data.lock);
-
-  TestRoom *room = &server_data.rooms[room_id];
-
-  // Send time update to all participants
+  // Send time update to participants of this room (lookup from DB)
   char update[100];
   snprintf(update, sizeof(update), "TIME_UPDATE|%d|%d\n", room_id, time_remaining);
 
-  for (int i = 0; i < room->participant_count; i++)
-  {
-    // In a real app, we'd need to track client sockets for each participant
-    // For now, just log the broadcast
-    LOG_DEBUG("Broadcast time update: Room %d has %d seconds remaining", room_id, time_remaining);
+  sqlite3_stmt *stmt;
+  const char *sel = "SELECT user_id FROM participants WHERE room_id = ?";
+  if (sqlite3_prepare_v2(db, sel, -1, &stmt, NULL) == SQLITE_OK) {
+    sqlite3_bind_int(stmt, 1, room_id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      int uid = sqlite3_column_int(stmt, 0);
+      for (int i = 0; i < server_data.user_count; i++) {
+        if (server_data.users[i].user_id == uid && server_data.users[i].is_online && server_data.users[i].socket_fd > 0) {
+          send(server_data.users[i].socket_fd, update, strlen(update), 0);
+        }
+      }
+    }
+    sqlite3_finalize(stmt);
   }
-
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -49,56 +53,69 @@ void check_room_timeouts(void)
   pthread_mutex_lock(&server_data.lock);
 
   time_t now = time(NULL);
+  sqlite3_stmt *stmt;
 
-  for (int i = 0; i < server_data.room_count; i++)
-  {
-    TestRoom *room = &server_data.rooms[i];
+  // Find active rooms with end_time set
+  const char *sel_rooms = "SELECT id, end_time FROM rooms WHERE is_active = 1 AND end_time > 0";
+  if (sqlite3_prepare_v2(db, sel_rooms, -1, &stmt, NULL) == SQLITE_OK) {
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      int rid = sqlite3_column_int(stmt, 0);
+      long end_time = sqlite3_column_int64(stmt, 1);
+      long remaining = end_time - now;
 
-    if (room->status == 1)
-    { // Ongoing
-      int elapsed = (int)(now - room->start_time);
-      int remaining = room->time_limit - elapsed;
+      if (remaining > 0) {
+        broadcast_time_update(rid, (int)remaining);
+      } else {
+        // Time's up for this room - auto-submit all participants
+        LOG_INFO("Room %d time's up (server) - auto-submitting participants", rid);
 
-      if (remaining > 0)
-      {
-        broadcast_time_update(i, remaining);
-      }
-      else if (room->status == 1)
-      {
-        // Time's up - auto-submit all
-        room->status = 2; // Finished
-        LOG_INFO("Room %d time's up - test finished", i);
+        // Get participants
+        sqlite3_stmt *ps;
+        const char *sel_parts = "SELECT user_id FROM participants WHERE room_id = ?";
+        if (sqlite3_prepare_v2(db, sel_parts, -1, &ps, NULL) == SQLITE_OK) {
+          sqlite3_bind_int(ps, 1, rid);
+          while (sqlite3_step(ps) == SQLITE_ROW) {
+            int uid = sqlite3_column_int(ps, 0);
+            // call existing auto-submit function
+            auto_submit_on_timeout(uid, rid);
 
-        for (int j = 0; j < room->participant_count; j++)
-        {
-          int user_id = room->participants[j];
-
-          // Calculate scores
-          int score = 0;
-          for (int q = 0; q < room->num_questions; q++)
-          {
-            if (room->answers[j][q].answer == server_data.questions[q].correct_answer)
-            {
-              score++;
+            // notify connected user
+            for (int i = 0; i < server_data.user_count; i++) {
+              if (server_data.users[i].user_id == uid && server_data.users[i].is_online && server_data.users[i].socket_fd > 0) {
+                char notify[128];
+                snprintf(notify, sizeof(notify), "EXAM_FINISHED|%d\n", rid);
+                send(server_data.users[i].socket_fd, notify, strlen(notify), 0);
+              }
             }
           }
-          room->scores[j] = score;
+          sqlite3_finalize(ps);
+        }
 
-          // Insert into results
-          char query[300];
-          snprintf(query, sizeof(query),
-                   "INSERT INTO results (user_id, room_id, score, total_questions, time_taken) "
-                   "VALUES (%d, %d, %d, %d, %d);",
-                   user_id, i, score, room->num_questions, room->time_limit);
-
-          char *err_msg = 0;
-          sqlite3_exec(db, query, 0, 0, &err_msg);
+        // Mark room as inactive/closed
+        const char *upd = "UPDATE rooms SET is_active = 0 WHERE id = ?";
+        sqlite3_stmt *us;
+        if (sqlite3_prepare_v2(db, upd, -1, &us, NULL) == SQLITE_OK) {
+          sqlite3_bind_int(us, 1, rid);
+          sqlite3_step(us);
+          sqlite3_finalize(us);
         }
       }
     }
+    sqlite3_finalize(stmt);
   }
 
   pthread_mutex_unlock(&server_data.lock);
+}
+
+// Background monitor thread helper
+void *timer_monitor_loop(void *arg)
+{
+  (void)arg;
+  while (1) {
+    check_room_timeouts();
+    sleep(1);
+  }
+  return NULL;
 }
 
 void cleanup_expired_rooms(void)

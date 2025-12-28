@@ -27,6 +27,9 @@ int main(int argc, char *argv[]) {
     // 👉 Đặt timeout sau khi kết nối thành công
     net_set_timeout(client.socket_fd);
 
+    // Start background listener to receive server pushes
+    start_server_listener();
+
     /* Connection established; keep UI message minimal */
 
     main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);

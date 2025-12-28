@@ -121,12 +121,13 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     
     if (selected == -1) return;
     
-    // Gửi SAVE_ANSWER đến server
-    char msg[128];
-    // Display uses 1-4 for A-D; send 1-4 to server
-    snprintf(msg, sizeof(msg), "SAVE_ANSWER|%d|%d|%d\n", 
-             exam_room_id, question_id, selected + 1);
-    send_message(msg);
+    // Gửi SAVE_ANSWER đến server as JSON; if send fails, store pending
+    char json[256];
+    snprintf(json, sizeof(json), "{\"type\":\"SAVE_ANSWER\",\"user_id\":%d,\"room_id\":%d,\"question_id\":%d,\"selected\":%d,\"ts\":%ld}\n",
+             current_user_id, exam_room_id, question_id, selected + 1, (long)time(NULL));
+    if (send_json_message(json) <= 0) {
+        add_pending_answer(exam_room_id, question_id, selected + 1);
+    }
 
     // Answer saved (debug prints removed)
 }

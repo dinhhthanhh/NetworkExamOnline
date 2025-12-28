@@ -9,9 +9,12 @@
 #include "practice.h"
 #include <sys/socket.h>
 #include <unistd.h>
+#include "cJSON.h"
 
 extern ServerData server_data;
 extern sqlite3 *db;
+
+// cJSON will be used for JSON parsing
 
 void *handle_client(void *arg)
 {
@@ -19,6 +22,8 @@ void *handle_client(void *arg)
   char buffer[BUFFER_SIZE];
   int user_id = -1;
   int current_room_id = -1;
+
+  /* JSON parsing is handled by helper functions above */
 
   while (1)
   {
@@ -76,6 +81,65 @@ void *handle_client(void *arg)
 
     LOG_DEBUG("Received: %s", buffer);
 
+    // JSON dispatcher for structured messages
+    if (buffer[0] == '{') {
+      cJSON *root = cJSON_Parse(buffer);
+      if (root) {
+        cJSON *type = cJSON_GetObjectItem(root, "type");
+        if (cJSON_IsString(type) && type->valuestring) {
+          if (strcmp(type->valuestring, "IDENTIFY") == 0) {
+            cJSON *juid = cJSON_GetObjectItem(root, "user_id");
+            cJSON *jrid = cJSON_GetObjectItem(root, "room_id");
+            int uid = cJSON_IsNumber(juid) ? juid->valueint : 0;
+            int rid = cJSON_IsNumber(jrid) ? jrid->valueint : 0;
+            if (uid > 0) {
+              user_id = uid;
+              pthread_mutex_lock(&server_data.lock);
+              for (int i = 0; i < server_data.user_count; i++) {
+                if (server_data.users[i].user_id == user_id) {
+                  server_data.users[i].is_online = 1;
+                  server_data.users[i].socket_fd = socket_fd;
+                  server_data.users[i].last_activity = time(NULL);
+                  break;
+                }
+              }
+              pthread_mutex_unlock(&server_data.lock);
+
+              if (rid > 0) handle_resume_exam(socket_fd, user_id, rid);
+              else send(socket_fd, "IDENTIFY_OK\n", 11, 0);
+            } else {
+              send(socket_fd, "IDENTIFY_FAIL\n", 14, 0);
+            }
+            cJSON_Delete(root);
+            continue;
+          }
+
+          if (strcmp(type->valuestring, "SAVE_ANSWER") == 0) {
+            cJSON *jrid = cJSON_GetObjectItem(root, "room_id");
+            cJSON *jqid = cJSON_GetObjectItem(root, "question_id");
+            cJSON *jsel = cJSON_GetObjectItem(root, "selected");
+            int rid = cJSON_IsNumber(jrid) ? jrid->valueint : 0;
+            int qid = cJSON_IsNumber(jqid) ? jqid->valueint : 0;
+            int sel = cJSON_IsNumber(jsel) ? jsel->valueint : 0;
+            int uid = (user_id > 0) ? user_id : (cJSON_GetObjectItem(root, "user_id") ? cJSON_GetObjectItem(root, "user_id")->valueint : 0);
+            save_answer(socket_fd, uid, rid, qid, sel);
+            cJSON_Delete(root);
+            continue;
+          }
+
+          if (strcmp(type->valuestring, "SUBMIT_TEST") == 0) {
+            int rid = 0;
+            cJSON *jrid = cJSON_GetObjectItem(root, "room_id");
+            if (cJSON_IsNumber(jrid)) rid = jrid->valueint;
+            submit_test(socket_fd, user_id, rid);
+            cJSON_Delete(root);
+            continue;
+          }
+        }
+        cJSON_Delete(root);
+      }
+    }
+
     char *cmd = strtok(buffer, "|");
     if (cmd == NULL)
       continue;
@@ -92,6 +156,40 @@ void *handle_client(void *arg)
       char *username = strtok(NULL, "|");
       char *password = strtok(NULL, "|");
       login_user(socket_fd, username, password, &user_id);
+    }
+    else if (strcmp(cmd, "IDENTIFY") == 0)
+    {
+      // IDENTIFY|<user_id>|<room_id>
+      char *uid_str = strtok(NULL, "|");
+      char *rid_str = strtok(NULL, "|");
+      int uid = uid_str ? atoi(uid_str) : -1;
+      int rid = rid_str ? atoi(rid_str) : -1;
+
+      if (uid > 0) {
+        user_id = uid;
+        // mark user online and set socket
+        pthread_mutex_lock(&server_data.lock);
+        for (int i = 0; i < server_data.user_count; i++) {
+          if (server_data.users[i].user_id == user_id) {
+            server_data.users[i].is_online = 1;
+            server_data.users[i].socket_fd = socket_fd;
+            server_data.users[i].last_activity = time(NULL);
+            break;
+          }
+        }
+        pthread_mutex_unlock(&server_data.lock);
+
+        // Respond with resume info for room if provided
+        if (rid > 0) {
+          handle_resume_exam(socket_fd, user_id, rid);
+        } else {
+          char ok[] = "IDENTIFY_OK\n";
+          send(socket_fd, ok, strlen(ok), 0);
+        }
+      } else {
+        char fail[] = "IDENTIFY_FAIL\n";
+        send(socket_fd, fail, strlen(fail), 0);
+      }
     }
     // Room Management
     else if (strcmp(cmd, "LIST_ROOMS") == 0)

@@ -62,7 +62,13 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
         }
         
         strncpy(client.username, username, sizeof(client.username) - 1);
+        client.user_id = current_user_id;
         create_main_menu();
+
+        // Inform server of identity for reconnection handling (JSON)
+        char id_json[128];
+        snprintf(id_json, sizeof(id_json), "{\"type\":\"IDENTIFY\",\"user_id\":%d,\"room_id\":0}\n", current_user_id);
+        send_json_message(id_json);
     }
     else
     {

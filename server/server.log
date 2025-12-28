@@ -1,3 +1,15 @@
-Bind failed: Address already in use
-Database initialized successfully
-Sample questions loaded
+nohup: ignoring input
+[INFO] Database initialized successfully
+[INFO] Default admin account: Username=admin Password=admin123
+[INFO] Server started on port 8888
+[INFO] New client connected: 127.0.0.1:43982
+[DEBUG] Received: {"type": "IDENTIFY", "user_id": 123}
+[DEBUG] Received: {"type": "SAVE_ANSWER", "user_id": 123, "room_id": 1, "question_id": 1, "selected": 2}
+[INFO] DISCONNECT: User 123 disconnected
+[INFO] New client connected: 127.0.0.1:44230
+[DEBUG] Received: {"type": "IDENTIFY", "user_id": 123}
+[INFO] DISCONNECT: User 123 disconnected
+[INFO] New client connected: 127.0.0.1:44232
+[DEBUG] Received: {"type": "IDENTIFY", "user_id": 123, "room_id": 1}
+[INFO] User 123 resumed exam in room 1 (3438 seconds remaining)
+[INFO] DISCONNECT: User 123 disconnected

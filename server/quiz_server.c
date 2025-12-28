@@ -2,6 +2,7 @@
 #include "network.h"
 #include "db.h"
 #include "questions.h"
+#include "timer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,14 @@ int main()
     // Initialize DB and load questions
     init_database();
     // load_sample_questions();
+
+    // Start background timer monitor thread (checks room timeouts)
+    pthread_t timer_thread;
+    if (pthread_create(&timer_thread, NULL, timer_monitor_loop, NULL) != 0) {
+        LOG_ERROR("Failed to start timer monitor thread");
+    } else {
+        pthread_detach(timer_thread);
+    }
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0)

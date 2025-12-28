@@ -17,5 +17,6 @@ void start_room_timer(int room_id, int time_limit);
 void broadcast_time_update(int room_id, int time_remaining);
 void check_room_timeouts(void);
 void cleanup_expired_rooms(void);
+void *timer_monitor_loop(void *arg);
 
 #endif

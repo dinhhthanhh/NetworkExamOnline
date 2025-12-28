@@ -10,4 +10,10 @@ void net_set_timeout(int sockfd);
 void net_set_debug(int enabled);
 ssize_t receive_message_timeout(char *buffer, size_t bufsz, int timeout_sec);
 
+// Start background listener to receive server push messages
+void start_server_listener(void);
+int send_json_message(const char *json);
+void add_pending_answer(int room_id, int question_id, int selected);
+void flush_pending_answers(void);
+
 #endif // NET_H

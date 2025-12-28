@@ -183,6 +183,45 @@ void init_database() {
   sqlite3_exec(db, sql_alter_results_timestamp, 0, 0, &err_msg);
   if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
 
+  // Persist room start/end times so sessions survive restarts
+  const char *sql_alter_rooms_start =
+    "ALTER TABLE rooms ADD COLUMN start_time INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_rooms_start, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  const char *sql_alter_rooms_end =
+    "ALTER TABLE rooms ADD COLUMN end_time INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_rooms_end, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Create sessions table to represent an exam instance for a room
+  const char *sql_sessions =
+    "CREATE TABLE IF NOT EXISTS sessions ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "room_id INTEGER NOT NULL,"
+    "start_time INTEGER NOT NULL,"
+    "end_time INTEGER NOT NULL,"
+    "is_active INTEGER DEFAULT 1," 
+    "FOREIGN KEY(room_id) REFERENCES rooms(id)"
+    ");";
+  sqlite3_exec(db, sql_sessions, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Add session_id to participants (for resume mapping)
+  const char *sql_alter_part_session = "ALTER TABLE participants ADD COLUMN session_id INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_part_session, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Add session_id to user_answers for per-session answers
+  const char *sql_alter_user_answers_session = "ALTER TABLE user_answers ADD COLUMN session_id INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_user_answers_session, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
+  // Index for answers by user+session
+  const char *idx_user_answers_session = "CREATE INDEX IF NOT EXISTS idx_user_answers_session ON user_answers(user_id, session_id);";
+  sqlite3_exec(db, idx_user_answers_session, 0, 0, &err_msg);
+  if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+
   // ============================================================================
   // CREATE INDEXES for better performance
   // ============================================================================

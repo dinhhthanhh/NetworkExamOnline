@@ -80,7 +80,26 @@ static int get_room_duration(int room_id)
 static void calculate_score(int user_id, int room_id, int *score, int *total_questions)
 {
     // Đếm số câu trả lời đúng
-    const char *sql_score = 
+    // Prefer session-scoped answers if available
+    int session_id = 0;
+    sqlite3_stmt *sstmt;
+    const char *sel_part = "SELECT session_id FROM participants WHERE room_id = ? AND user_id = ?";
+    if (sqlite3_prepare_v2(db, sel_part, -1, &sstmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(sstmt, 1, room_id);
+        sqlite3_bind_int(sstmt, 2, user_id);
+        if (sqlite3_step(sstmt) == SQLITE_ROW) {
+            session_id = sqlite3_column_int(sstmt, 0);
+        }
+        sqlite3_finalize(sstmt);
+    }
+
+    const char *sql_score_session = 
+        "SELECT COUNT(*) FROM user_answers ua "
+        "JOIN questions q ON ua.question_id = q.id "
+        "WHERE ua.user_id = ? AND ua.session_id = ? "
+        "AND ua.selected_answer = q.correct_answer";
+
+    const char *sql_score_room = 
         "SELECT COUNT(*) FROM user_answers ua "
         "JOIN questions q ON ua.question_id = q.id "
         "WHERE ua.user_id = ? AND ua.room_id = ? "
@@ -89,14 +108,24 @@ static void calculate_score(int user_id, int room_id, int *score, int *total_que
     sqlite3_stmt *stmt;
     *score = 0;
     
-    if (sqlite3_prepare_v2(db, sql_score, -1, &stmt, NULL) == SQLITE_OK) {
-        sqlite3_bind_int(stmt, 1, user_id);
-        sqlite3_bind_int(stmt, 2, room_id);
-        
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            *score = sqlite3_column_int(stmt, 0);
+    if (session_id > 0) {
+        if (sqlite3_prepare_v2(db, sql_score_session, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, user_id);
+            sqlite3_bind_int(stmt, 2, session_id);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                *score = sqlite3_column_int(stmt, 0);
+            }
+            sqlite3_finalize(stmt);
         }
-        sqlite3_finalize(stmt);
+    } else {
+        if (sqlite3_prepare_v2(db, sql_score_room, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, user_id);
+            sqlite3_bind_int(stmt, 2, room_id);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                *score = sqlite3_column_int(stmt, 0);
+            }
+            sqlite3_finalize(stmt);
+        }
     }
     
     // Đếm tổng số câu hỏi
@@ -299,18 +328,44 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     }
     
     // Kiểm tra timeout
+    // Prefer session-based timing if a session exists for this room
     int duration = get_room_duration(room_id);
-    long elapsed = time(NULL) - start_time;
-    if (elapsed > duration * 60) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Time expired\n", 31, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
+    long elapsed = 0;
+    int session_id = 0;
+    sqlite3_stmt *sstmt;
+    const char *sel_session = "SELECT id, start_time, end_time FROM sessions WHERE room_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1";
+    if (sqlite3_prepare_v2(db, sel_session, -1, &sstmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(sstmt, 1, room_id);
+        if (sqlite3_step(sstmt) == SQLITE_ROW) {
+            session_id = sqlite3_column_int(sstmt, 0);
+            long s_start = sqlite3_column_int64(sstmt, 1);
+            long s_end = sqlite3_column_int64(sstmt, 2);
+            long now = time(NULL);
+            elapsed = now - s_start;
+            if (now > s_end) {
+                sqlite3_finalize(sstmt);
+                send(socket_fd, "SAVE_ANSWER_FAIL|Time expired\n", 31, 0);
+                pthread_mutex_unlock(&server_data.lock);
+                return;
+            }
+        }
+        sqlite3_finalize(sstmt);
+    } else {
+        // Fallback to participant start_time logic
+        int d = get_room_duration(room_id);
+        elapsed = time(NULL) - start_time;
+        duration = d;
+        if (elapsed > duration * 60) {
+            send(socket_fd, "SAVE_ANSWER_FAIL|Time expired\n", 31, 0);
+            pthread_mutex_unlock(&server_data.lock);
+            return;
+        }
     }
     
     // INSERT OR REPLACE với prepared statement
     const char *sql = 
-        "INSERT OR REPLACE INTO user_answers (user_id, room_id, question_id, selected_answer, answered_at) "
-        "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)";
+        "INSERT OR REPLACE INTO user_answers (user_id, room_id, session_id, question_id, selected_answer, answered_at) "
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)";
     
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
@@ -321,8 +376,9 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     
     sqlite3_bind_int(stmt, 1, user_id);
     sqlite3_bind_int(stmt, 2, room_id);
-    sqlite3_bind_int(stmt, 3, question_id);
-    sqlite3_bind_int(stmt, 4, selected_answer);
+    sqlite3_bind_int(stmt, 3, session_id);
+    sqlite3_bind_int(stmt, 4, question_id);
+    sqlite3_bind_int(stmt, 5, selected_answer);
     
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

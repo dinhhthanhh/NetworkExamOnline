@@ -97,12 +97,13 @@ void *handle_client(void *arg)
       int room_id = atoi(strtok(NULL, "|"));
       join_test_room(socket_fd, user_id, room_id);
     }
-    else if (strcmp(cmd, "SET_MAX_ATTEMPTS") == 0)
-    {
-      int room_id = atoi(strtok(NULL, "|"));
-      int max_attempts = atoi(strtok(NULL, "|"));
-      set_room_max_attempts(socket_fd, user_id, room_id, max_attempts);
-    }
+    // MAX_ATTEMPTS logic removed - users can only take exam once
+    // else if (strcmp(cmd, "SET_MAX_ATTEMPTS") == 0)
+    // {
+    //   int room_id = atoi(strtok(NULL, "|"));
+    //   int max_attempts = atoi(strtok(NULL, "|"));
+    //   set_room_max_attempts(socket_fd, user_id, room_id, max_attempts);
+    // }
     else if (strcmp(cmd, "LIST_MY_ROOMS") == 0)
     {
       list_my_rooms(socket_fd, user_id);
@@ -124,11 +125,12 @@ void *handle_client(void *arg)
       current_room_id = room_id; // Track room
       handle_resume_exam(socket_fd, user_id, room_id);
     }
-    else if (strcmp(cmd, "CLOSE_ROOM") == 0)
-    {
-      int room_id = atoi(strtok(NULL, "|"));
-      close_room(socket_fd, user_id, room_id);
-    }
+    // CLOSE_ROOM removed - rooms are closed automatically after exam ends
+    // else if (strcmp(cmd, "CLOSE_ROOM") == 0)
+    // {
+    //   int room_id = atoi(strtok(NULL, "|"));
+    //   close_room(socket_fd, user_id, room_id);
+    // }
     // else if (strcmp(cmd, "GET_QUESTION") == 0)
     // {
     //   int room_id = atoi(strtok(NULL, "|"));
@@ -244,3 +246,64 @@ void *handle_client(void *arg)
   free(arg);
   pthread_exit(NULL);
 }
+
+// Broadcast message đến tất cả participants trong room
+void broadcast_to_room_participants(int room_id, const char *message) {
+  pthread_mutex_lock(&server_data.lock);
+  
+  // Tìm room trong in-memory
+  int room_idx = -1;
+  for (int i = 0; i < server_data.room_count; i++) {
+    if (server_data.rooms[i].room_id == room_id) {
+      room_idx = i;
+      break;
+    }
+  }
+  
+  if (room_idx == -1) {
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  // Gửi message đến tất cả participants
+  TestRoom *room = &server_data.rooms[room_idx];
+  for (int i = 0; i < room->participant_count; i++) {
+    int user_id = room->participants[i];
+    
+    // Tìm socket_fd của user
+    for (int j = 0; j < server_data.user_count; j++) {
+      if (server_data.users[j].user_id == user_id && 
+          server_data.users[j].is_online == 1) {
+        send(server_data.users[j].socket_fd, message, strlen(message), 0);
+        printf("[BROADCAST] Sent to user %d (room %d): %s", 
+               user_id, room_id, message);
+        break;
+      }
+    }
+  }
+  
+  pthread_mutex_unlock(&server_data.lock);
+}
+
+// Broadcast thông báo room mới được tạo (tạm thời gửi cho tất cả online users)
+// TODO: Chỉ gửi cho users đang xem LIST_ROOMS
+void broadcast_room_created(int room_id, const char *room_name, int duration) {
+  pthread_mutex_lock(&server_data.lock);
+  
+  char message[512];
+  snprintf(message, sizeof(message), 
+           "ROOM_CREATED|%d|%s|%d\n",
+           room_id, room_name, duration);
+  
+  // Gửi đến tất cả users online (tạm thời - sau này có thể track users đang xem list)
+  for (int i = 0; i < server_data.user_count; i++) {
+    if (server_data.users[i].is_online == 1) {
+      send(server_data.users[i].socket_fd, message, strlen(message), 0);
+      printf("[BROADCAST] Room created notification sent to user %d\n", 
+             server_data.users[i].user_id);
+    }
+  }
+  
+  pthread_mutex_unlock(&server_data.lock);
+}
+

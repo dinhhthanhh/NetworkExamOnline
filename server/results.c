@@ -280,6 +280,15 @@ void submit_test(int socket_fd, int user_id, int room_id)
       sqlite3_free(err_msg);
   }
 
+  // ===== CẬP NHẬT HAS_TAKEN_EXAM = 1 (LOGIC MỚI) =====
+  char update_taken_query[256];
+  snprintf(update_taken_query, sizeof(update_taken_query),
+           "UPDATE room_participants SET has_taken_exam = 1 "
+           "WHERE user_id = %d AND room_id = %d",
+           user_id, room_id);
+  sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
+  printf("[SUBMIT] Marked user %d as taken exam in room %d\n", user_id, room_id);
+
   char response[200];
   snprintf(response, sizeof(response), "SUBMIT_TEST_OK|%d|%d|%ld\n", 
            score, total_questions, elapsed/60);
@@ -361,19 +370,7 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   time_t now = time(NULL);
   long elapsed = now - start_time;
   
-  // Lấy duration
-  char duration_query[256];
-  snprintf(duration_query, sizeof(duration_query),
-           "SELECT duration FROM rooms WHERE id = %d", room_id);
-  
-  int duration_minutes = 60;
-  if (sqlite3_prepare_v2(db, duration_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-          duration_minutes = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-  }
-  
+
   // Tính điểm
   char score_query[512];
   snprintf(score_query, sizeof(score_query),

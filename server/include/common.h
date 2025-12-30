@@ -39,9 +39,9 @@ typedef struct
   char room_name[100];
   int num_questions;
   int time_limit;
-  int status;
+  int room_status;  // 0=WAITING, 1=STARTED, 2=ENDED
   int current_question;
-  time_t start_time;
+  time_t exam_start_time;  // Thời điểm host bắt đầu exam
   time_t end_time;
   int participants[MAX_CLIENTS];
   int participant_count;

@@ -26,7 +26,7 @@ void get_leaderboard(int socket_fd, int limit)
     int rank = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-      int user_id = sqlite3_column_int(stmt, 0);
+      // int user_id = sqlite3_column_int(stmt, 0);  // Unused - commented out
       const char *username = (const char *)sqlite3_column_text(stmt, 1);
       int total_score = sqlite3_column_int(stmt, 2);
       int tests_completed = sqlite3_column_int(stmt, 3);

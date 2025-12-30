@@ -54,45 +54,114 @@ void check_room_timeouts(void)
   {
     TestRoom *room = &server_data.rooms[i];
 
-    if (room->status == 1)
+    if (room->room_status == 1)  // STARTED
     { // Ongoing
-      int elapsed = (int)(now - room->start_time);
+      int elapsed = (int)(now - room->exam_start_time);
       int remaining = room->time_limit - elapsed;
 
       if (remaining > 0)
       {
         broadcast_time_update(i, remaining);
       }
-      else if (room->status == 1)
+      else if (room->room_status == 1)
       {
-        // Time's up - auto-submit all
-        room->status = 2; // Finished
+        // Time's up - auto-submit CHỈ users đang ONLINE
+        room->room_status = 2; // ENDED
         printf("Room %d time's up - test finished\n", i);
 
-        for (int j = 0; j < room->participant_count; j++)
-        {
-          int user_id = room->participants[j];
+        // Query danh sách participants từ DB để lấy users đã bắt đầu thi
+        char participant_query[512];
+        snprintf(participant_query, sizeof(participant_query),
+                 "SELECT DISTINCT p.user_id FROM participants p "
+                 "WHERE p.room_id = %d AND p.start_time > 0",
+                 i);
 
-          // Calculate scores
-          int score = 0;
-          for (int q = 0; q < room->num_questions; q++)
-          {
-            if (room->answers[j][q].answer == server_data.questions[q].correct_answer)
-            {
-              score++;
+        sqlite3_stmt *stmt;
+        if (sqlite3_prepare_v2(db, participant_query, -1, &stmt, NULL) == SQLITE_OK) {
+          while (sqlite3_step(stmt) == SQLITE_ROW) {
+            int user_id = sqlite3_column_int(stmt, 0);
+
+            // Kiểm tra user có đang online không
+            int is_online = 0;
+            for (int u = 0; u < server_data.user_count; u++) {
+              if (server_data.users[u].user_id == user_id) {
+                is_online = server_data.users[u].is_online;
+                break;
+              }
+            }
+
+            // CHỈ auto-submit user đang online
+            // User offline sẽ được giữ lại để có thể RESUME sau
+            if (is_online) {
+              // Query để check đã submit chưa
+              char check_result[256];
+              snprintf(check_result, sizeof(check_result),
+                       "SELECT id FROM results WHERE room_id = %d AND user_id = %d",
+                       i, user_id);
+
+              sqlite3_stmt *check_stmt;
+              int already_submitted = 0;
+              if (sqlite3_prepare_v2(db, check_result, -1, &check_stmt, NULL) == SQLITE_OK) {
+                if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+                  already_submitted = 1;
+                }
+                sqlite3_finalize(check_stmt);
+              }
+
+              if (!already_submitted) {
+                // Tính điểm từ user_answers
+                char score_query[512];
+                snprintf(score_query, sizeof(score_query),
+                         "SELECT COUNT(*) FROM user_answers ua "
+                         "JOIN questions q ON ua.question_id = q.id "
+                         "WHERE ua.user_id = %d AND ua.room_id = %d "
+                         "AND ua.selected_answer = q.correct_answer",
+                         user_id, i);
+
+                int score = 0;
+                sqlite3_stmt *score_stmt;
+                if (sqlite3_prepare_v2(db, score_query, -1, &score_stmt, NULL) == SQLITE_OK) {
+                  if (sqlite3_step(score_stmt) == SQLITE_ROW) {
+                    score = sqlite3_column_int(score_stmt, 0);
+                  }
+                  sqlite3_finalize(score_stmt);
+                }
+
+                // Đếm tổng số câu hỏi
+                char count_query[256];
+                snprintf(count_query, sizeof(count_query),
+                         "SELECT COUNT(*) FROM questions WHERE room_id = %d", i);
+
+                int total_questions = 0;
+                sqlite3_stmt *count_stmt;
+                if (sqlite3_prepare_v2(db, count_query, -1, &count_stmt, NULL) == SQLITE_OK) {
+                  if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+                    total_questions = sqlite3_column_int(count_stmt, 0);
+                  }
+                  sqlite3_finalize(count_stmt);
+                }
+
+                // Insert into results
+                char insert_query[512];
+                snprintf(insert_query, sizeof(insert_query),
+                         "INSERT INTO results (user_id, room_id, score, total_questions, time_taken) "
+                         "VALUES (%d, %d, %d, %d, %d)",
+                         user_id, i, score, total_questions, room->time_limit * 60);
+
+                char *err_msg = NULL;
+                sqlite3_exec(db, insert_query, NULL, NULL, &err_msg);
+                if (err_msg) {
+                  sqlite3_free(err_msg);
+                }
+
+                printf("[TIMER] Auto-submitted user %d (online) - Score: %d/%d\n", 
+                       user_id, score, total_questions);
+              }
+            } else {
+              printf("[TIMER] User %d is offline - NOT auto-submitting (can resume later)\n", user_id);
             }
           }
-          room->scores[j] = score;
-
-          // Insert into results
-          char query[300];
-          snprintf(query, sizeof(query),
-                   "INSERT INTO results (user_id, room_id, score, total_questions, time_taken) "
-                   "VALUES (%d, %d, %d, %d, %d);",
-                   user_id, i, score, room->num_questions, room->time_limit);
-
-          char *err_msg = 0;
-          sqlite3_exec(db, query, 0, 0, &err_msg);
+          sqlite3_finalize(stmt);
         }
       }
     }
@@ -112,7 +181,7 @@ void cleanup_expired_rooms(void)
   {
     TestRoom *room = &server_data.rooms[i];
 
-    if (room->status == 2)
+    if (room->room_status == 2)  // ENDED
     { // Finished
       int age = (int)(now - room->end_time);
 

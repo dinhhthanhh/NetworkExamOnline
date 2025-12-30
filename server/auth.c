@@ -106,15 +106,27 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
 
       // Kiểm tra user đã online chưa (chống đăng nhập đồng thời)
       int already_online = 0;
+      int duplicate_count = 0;
       for (int i = 0; i < server_data.user_count; i++)
       {
-        if (server_data.users[i].user_id == *user_id && server_data.users[i].is_online == 1)
+        if (server_data.users[i].user_id == *user_id)
         {
-          already_online = 1;
-          printf("[LOGIN_BLOCKED] User %s (ID: %d) is already online from socket %d\n", 
-                 username, *user_id, server_data.users[i].socket_fd);
-          break;
+          duplicate_count++;
+          printf("[LOGIN_DEBUG] Found user %s (ID: %d) in memory at index %d: is_online=%d, socket_fd=%d\n",
+                 username, *user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
+          
+          if (server_data.users[i].is_online == 1)
+          {
+            already_online = 1;
+            printf("[LOGIN_BLOCKED] User %s (ID: %d) is already online from socket %d\n", 
+                   username, *user_id, server_data.users[i].socket_fd);
+          }
         }
+      }
+
+      if (duplicate_count > 1) {
+        printf("[LOGIN_WARNING] User %s (ID: %d) has %d duplicate entries in memory!\n", 
+               username, *user_id, duplicate_count);
       }
 
       if (already_online)
@@ -131,6 +143,7 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
       generate_session_token(token, sizeof(token));
 
       // Update user data with token and last activity
+      // QUAN TRỌNG: Update TẤT CẢ instances của user (nếu có duplicate)
       int user_found = 0;
       for (int i = 0; i < server_data.user_count; i++)
       {
@@ -141,7 +154,8 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
           server_data.users[i].is_online = 1;
           server_data.users[i].socket_fd = socket_fd;
           user_found = 1;
-          break;
+          printf("[LOGIN_UPDATE] Updated user %s (ID: %d) at index %d\n", username, *user_id, i);
+          // KHÔNG BREAK - tiếp tục update tất cả instances
         }
       }
 
@@ -189,41 +203,52 @@ void logout_user(int user_id, int socket_fd)
   pthread_mutex_lock(&server_data.lock);
 
   int logged_out_user_id = user_id;
+  int user_found = 0;
 
   // Cập nhật trạng thái user trong in-memory structure
+  // QUAN TRỌNG: Không break để đảm bảo logout TẤT CẢ instances (tránh duplicate)
   for (int i = 0; i < server_data.user_count; i++)
   {
     if (server_data.users[i].user_id == user_id || 
         (user_id == -1 && server_data.users[i].socket_fd == socket_fd))
     {
+      printf("[LOGOUT_DEBUG] Before: User ID=%d at index %d: is_online=%d, socket_fd=%d\n",
+             server_data.users[i].user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
+      
       server_data.users[i].is_online = 0;
       server_data.users[i].socket_fd = -1;
       memset(server_data.users[i].session_token, 0, sizeof(server_data.users[i].session_token));
       
       logged_out_user_id = server_data.users[i].user_id;
+      user_found = 1;
       
-      printf("[LOGOUT] User ID: %d (socket %d) logged out\n", 
-             server_data.users[i].user_id, socket_fd);
+      printf("[LOGOUT] User ID: %d (socket %d) logged out at index %d\n", 
+             server_data.users[i].user_id, socket_fd, i);
+      printf("[LOGOUT_DEBUG] After: User ID=%d at index %d: is_online=%d, socket_fd=%d\n",
+             server_data.users[i].user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
       
-      if (user_id > 0) {
-        log_activity(user_id, "LOGOUT", "User logged out");
-      }
-      
-      // Đồng bộ trạng thái offline vào database
-      if (logged_out_user_id > 0) {
-        char update_query[200];
-        char *err_msg = 0;
-        snprintf(update_query, sizeof(update_query),
-                 "UPDATE users SET is_online = 0 WHERE id = %d;", logged_out_user_id);
-        sqlite3_exec(db, update_query, 0, 0, &err_msg);
-        if (err_msg) {
-          fprintf(stderr, "[LOGOUT] Failed to update is_online in DB: %s\n", err_msg);
-          sqlite3_free(err_msg);
-        }
-      }
-      
-      break;
+      // KHÔNG BREAK - tiếp tục logout tất cả instances
     }
+  }
+
+  // Log activity và đồng bộ DB (chỉ 1 lần sau khi logout tất cả instances)
+  if (user_found && logged_out_user_id > 0) {
+    log_activity(logged_out_user_id, "LOGOUT", "User logged out");
+    
+    // Đồng bộ trạng thái offline vào database
+    char update_query[200];
+    char *err_msg = 0;
+    snprintf(update_query, sizeof(update_query),
+             "UPDATE users SET is_online = 0 WHERE id = %d;", logged_out_user_id);
+    sqlite3_exec(db, update_query, 0, 0, &err_msg);
+    if (err_msg) {
+      fprintf(stderr, "[LOGOUT] Failed to update is_online in DB: %s\n", err_msg);
+      sqlite3_free(err_msg);
+    }
+  }
+
+  if (!user_found) {
+    printf("[LOGOUT_WARNING] User not found for logout: user_id=%d, socket_fd=%d\n", user_id, socket_fd);
   }
 
   pthread_mutex_unlock(&server_data.lock);

@@ -58,7 +58,9 @@ void init_database() {
                             "name TEXT NOT NULL,"
                             "host_id INTEGER NOT NULL,"
                             "duration INTEGER DEFAULT 30,"  // Thời gian thi (phút)
-                            "is_active INTEGER DEFAULT 1,"  // 1: đang mở, 0: đã đóng
+                            "is_active INTEGER DEFAULT 1,"  // 1: đang mở, 0: đã đóng (deprecated)
+                            "room_status INTEGER DEFAULT 0,"  // 0=WAITING, 1=STARTED, 2=ENDED
+                            "exam_start_time INTEGER DEFAULT 0,"  // Unix timestamp khi host start
                             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                             "FOREIGN KEY(host_id) REFERENCES users(id) ON DELETE CASCADE"
                             ");";
@@ -89,6 +91,18 @@ void init_database() {
                             "UNIQUE(user_id, room_id, question_id)"  // Mỗi user chỉ trả lời mỗi câu 1 lần
                             ");";
 
+  const char *sql_room_participants = 
+                            "CREATE TABLE IF NOT EXISTS room_participants("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "user_id INTEGER NOT NULL,"
+                            "room_id INTEGER NOT NULL,"
+                            "has_taken_exam INTEGER DEFAULT 0,"  // 0: chưa thi, 1: đã thi
+                            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                            "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,"
+                            "FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE CASCADE,"
+                            "UNIQUE(user_id, room_id)"  // Mỗi user chỉ có 1 record cho mỗi room
+                            ");";
+
   sqlite3_exec(db, sql_users, 0, 0, &err_msg);
   sqlite3_exec(db, sql_results, 0, 0, &err_msg);
   sqlite3_exec(db, sql_activity_log, 0, 0, &err_msg);
@@ -96,15 +110,22 @@ void init_database() {
   sqlite3_exec(db, sql_rooms, 0, 0, &err_msg);
   sqlite3_exec(db, sql_participants, 0, 0, &err_msg);
   sqlite3_exec(db, sql_user_answers, 0, 0, &err_msg);
+  sqlite3_exec(db, sql_room_participants, 0, 0, &err_msg);
 
-  // Thêm cột max_attempts vào rooms nếu chưa có (0 = unlimited)
-  const char *sql_alter_rooms = 
-    "ALTER TABLE rooms ADD COLUMN max_attempts INTEGER DEFAULT 0;";
-  
-  // Bỏ qua lỗi nếu cột đã tồn tại
-  sqlite3_exec(db, sql_alter_rooms, 0, 0, &err_msg);
+  // Thêm cột room_status vào rooms nếu chưa có (0=WAITING, 1=STARTED, 2=ENDED)
+  const char *sql_alter_room_status = 
+    "ALTER TABLE rooms ADD COLUMN room_status INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_room_status, 0, 0, &err_msg);
   if (err_msg) {
-    // Cột đã tồn tại hoặc lỗi khác - không quan trọng
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột exam_start_time vào rooms nếu chưa có
+  const char *sql_alter_exam_start = 
+    "ALTER TABLE rooms ADD COLUMN exam_start_time INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_exam_start, 0, 0, &err_msg);
+  if (err_msg) {
     sqlite3_free(err_msg);
     err_msg = NULL;
   }
@@ -143,7 +164,10 @@ void init_database() {
   // Hash của "admin123" = 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
   const char *sql_create_admin = 
     "INSERT OR IGNORE INTO users (id, username, password, role) "
-    "VALUES (1, 'admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin');";
+    "VALUES (1, 'admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin');"
+    "INSERT OR IGNORE INTO users (id, username, password, role) "
+    "VALUES (2, 'admin2', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin');"
+    ;
   
   sqlite3_exec(db, sql_create_admin, 0, 0, &err_msg);
   if (err_msg) {

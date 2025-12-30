@@ -3,9 +3,22 @@
 #include "ui.h"
 #include "net.h"
 #include "exam_ui.h"
+#include "broadcast.h"
+#include "broadcast.h"
 #include <string.h>
 #include <stdlib.h>
 #include <gdk/gdk.h>
+
+// Callback when ROOM_CREATED broadcast received
+static void on_room_created_broadcast(int room_id, const char *room_name, int duration) {
+    printf("[ROOM_UI] Received ROOM_CREATED: %d - %s (%d min)\n", room_id, room_name, duration);
+    
+    // Auto refresh room list
+    if (rooms_list != NULL) {
+        printf("[ROOM_UI] Auto-refreshing room list\n");
+        load_rooms_list();
+    }
+}
 
 void on_room_button_clicked(GtkWidget *button, gpointer data)
 {
@@ -56,24 +69,18 @@ void load_rooms_list()
         {
             if (strncmp(line, "ROOM|", 5) == 0)
             {
-                // Parse: ROOM|id|name|time|status|question_status|owner|attempts_info
-                char room_id[16], room_name[64], owner[32], status[32], attempts_info[64];
+                // Parse: ROOM|id|name|time|status|question_status|owner
+                char room_id[16], room_name[64], owner[32], status[32];
                 int time_limit;
                 
-                // Parse với attempts_info (có thể không có ở old version)
-                int parsed = sscanf(line, "ROOM|%15[^|]|%63[^|]|%d|%31[^|]|%*[^|]|%31[^|]|%63s",
-                       room_id, room_name, &time_limit, status, owner, attempts_info);
-                
-                if (parsed < 6) {
-                    // Fallback nếu không có attempts_info
-                    strcpy(attempts_info, "Unlimited");
-                }
+                sscanf(line, "ROOM|%15[^|]|%63[^|]|%d|%31[^|]|%*[^|]|%31s",
+                       room_id, room_name, &time_limit, status, owner);
 
                 // Tạo button với thông tin phòng
                 char button_label[256];
                 snprintf(button_label, sizeof(button_label), 
-                        "🏠 %s | ⏱️ %dmin | 👤 %s | 🎯 %s", 
-                        room_name, time_limit, owner, attempts_info);
+                        "🏠 %s | ⏱️ %dmin | 👤 %s", 
+                        room_name, time_limit, owner);
                 
                 GtkWidget *btn = gtk_button_new_with_label(button_label);
                 
@@ -170,79 +177,66 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         char resume_buffer[BUFFER_SIZE];
         ssize_t resume_n = receive_message(resume_buffer, sizeof(resume_buffer));
         
-        // Nếu có session cũ và chưa hết thời gian
+        // Nếu có session cũ và chưa hết thời gian - TỰ ĐỘNG RESUME
         if (resume_n > 0 && strstr(resume_buffer, "RESUME_EXAM_OK")) {
-            GtkWidget *dialog = gtk_dialog_new_with_buttons(
-                "Resume Previous Exam?",
-                GTK_WINDOW(main_window),
-                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-                "Resume", GTK_RESPONSE_YES,
-                "Start New", GTK_RESPONSE_NO,
-                NULL);
-            
-            GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-            GtkWidget *label = gtk_label_new(NULL);
-            gtk_label_set_markup(GTK_LABEL(label),
-                "<span size='large'>🔄 You have an unfinished exam!</span>\n\n"
-                "You can resume where you left off with remaining time,\n"
-                "or start fresh (but you'll lose your progress).");
-            gtk_container_add(GTK_CONTAINER(content), label);
-            gtk_widget_show_all(content);
-            
-            int response = gtk_dialog_run(GTK_DIALOG(dialog));
-            gtk_widget_destroy(dialog);
-            
-            if (response == GTK_RESPONSE_YES) {
-                // Resume exam với data từ server
-                create_exam_page_from_resume(selected_room_id, resume_buffer);
-                return;
-            }
-            // Nếu chọn "Start New", tiếp tục flow bình thường bên dưới
+            printf("[ROOM_UI] Auto-resuming previous exam session\n");
+            create_exam_page_from_resume(selected_room_id, resume_buffer);
+            return;
         }
         
-        // Show dialog with "Start Exam" button
-        GtkWidget *dialog = gtk_dialog_new_with_buttons(
-            "Joined Room Successfully",
-            GTK_WINDOW(main_window),
-            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-            "Start Exam", GTK_RESPONSE_ACCEPT,
-            "Cancel", GTK_RESPONSE_CANCEL,
-            NULL);
+        // Nếu hết thời gian - báo lỗi
+        if (resume_n > 0 && strstr(resume_buffer, "RESUME_TIME_EXPIRED")) {
+            GtkWidget *error_dialog = gtk_message_dialog_new(
+                GTK_WINDOW(main_window),
+                GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_ERROR,
+                GTK_BUTTONS_OK,
+                "⏰ Time Expired");
+            gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
+                "Your exam session has expired. You cannot resume.");
+            gtk_dialog_run(GTK_DIALOG(error_dialog));
+            gtk_widget_destroy(error_dialog);
+            return;
+        }
         
-        GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-        GtkWidget *label = gtk_label_new(NULL);
-        gtk_label_set_markup(GTK_LABEL(label),
-            "<span size='large'>✅ Joined room successfully!</span>\n\n"
-            "Click 'Start Exam' when you're ready to begin.");
-        gtk_container_add(GTK_CONTAINER(content), label);
-        gtk_widget_show_all(content);
+        // Nếu đã submit - báo lỗi
+        if (resume_n > 0 && strstr(resume_buffer, "RESUME_ALREADY_SUBMITTED")) {
+            GtkWidget *error_dialog = gtk_message_dialog_new(
+                GTK_WINDOW(main_window),
+                GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_INFO,
+                GTK_BUTTONS_OK,
+                "✅ Already Completed");
+            gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
+                "You have already completed this exam.");
+            gtk_dialog_run(GTK_DIALOG(error_dialog));
+            gtk_widget_destroy(error_dialog);
+            return;
+        }
         
-        int response = gtk_dialog_run(GTK_DIALOG(dialog));
-        gtk_widget_destroy(dialog);
+        // Không có session cũ - BEGIN_EXAM trực tiếp (không cần dialog)
+        printf("[ROOM_UI] Starting new exam session\n");
+        char begin_cmd[128];
+        snprintf(begin_cmd, sizeof(begin_cmd), "BEGIN_EXAM|%d\n", selected_room_id);
+        send_message(begin_cmd);
         
-        if (response == GTK_RESPONSE_ACCEPT) {
-            // User clicked "Start Exam" - send BEGIN_EXAM
-            char begin_cmd[128];
-            snprintf(begin_cmd, sizeof(begin_cmd), "BEGIN_EXAM|%d\n", selected_room_id);
-            send_message(begin_cmd);
-            
-            char exam_buffer[BUFFER_SIZE];
-            ssize_t exam_n = receive_message(exam_buffer, sizeof(exam_buffer));
-            
-            if (exam_n > 0 && strstr(exam_buffer, "BEGIN_EXAM_OK")) {
-                // Start exam UI
-                create_exam_page(selected_room_id);
-            } else {
-                GtkWidget *error_dialog = gtk_message_dialog_new(
-                    GTK_WINDOW(main_window),
-                    GTK_DIALOG_DESTROY_WITH_PARENT,
-                    GTK_MESSAGE_ERROR,
-                    GTK_BUTTONS_OK,
-                    "❌ Failed to start exam:\n\n%s",
-                    exam_buffer[0] ? exam_buffer : "No response");
-                gtk_dialog_run(GTK_DIALOG(error_dialog));
-                gtk_widget_destroy(error_dialog);
-            }
+        char exam_buffer[BUFFER_SIZE];
+        ssize_t exam_n = receive_message(exam_buffer, sizeof(exam_buffer));
+        
+        // BEGIN_EXAM sẽ trả về BEGIN_EXAM_OK hoặc EXAM_WAITING
+        // exam_ui.c sẽ xử lý logic waiting nếu cần
+        if (exam_n > 0) {
+            create_exam_page(selected_room_id);
+        } else {
+            GtkWidget *error_dialog = gtk_message_dialog_new(
+                GTK_WINDOW(main_window),
+                GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_ERROR,
+                GTK_BUTTONS_OK,
+                "❌ Failed to start exam:\n\n%s",
+                exam_buffer[0] ? exam_buffer : "No response");
+            gtk_dialog_run(GTK_DIALOG(error_dialog));
+            gtk_widget_destroy(error_dialog);
         }
     }
     else
@@ -292,19 +286,6 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
     gtk_grid_attach(GTK_GRID(grid), time_label, 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), time_spin, 1, 1, 1, 1);
 
-    // Max attempts (0 = unlimited)
-    GtkWidget *attempts_label = gtk_label_new("Max Attempts:");
-    GtkWidget *attempts_spin = gtk_spin_button_new_with_range(0, 10, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(attempts_spin), 0);
-    gtk_grid_attach(GTK_GRID(grid), attempts_label, 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), attempts_spin, 1, 2, 1, 1);
-    
-    // Tooltip
-    GtkWidget *attempts_hint = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(attempts_hint), 
-        "<span size='small' foreground='#7f8c8d'>0 = Unlimited attempts</span>");
-    gtk_grid_attach(GTK_GRID(grid), attempts_hint, 1, 3, 1, 1);
-
     gtk_widget_show_all(dialog);
 
     int response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -312,7 +293,6 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
     {
         const char *room_name = gtk_entry_get_text(GTK_ENTRY(name_entry));
         int time_limit = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(time_spin));
-        int max_attempts = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(attempts_spin));
 
         if (strlen(room_name) > 0)
         {
@@ -325,25 +305,6 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
 
             if (n > 0 && strstr(buffer, "CREATE_ROOM_OK"))
             {
-                // Parse room_id từ response: CREATE_ROOM_OK|room_id|name|...
-                char *response_copy = strdup(buffer);
-                strtok(response_copy, "|"); // Skip "CREATE_ROOM_OK"
-                char *room_id_str = strtok(NULL, "|");
-                int created_room_id = room_id_str ? atoi(room_id_str) : -1;
-                free(response_copy);
-                
-                // Set max_attempts nếu khác 0
-                if (max_attempts > 0 && created_room_id > 0) {
-                    char attempts_cmd[128];
-                    snprintf(attempts_cmd, sizeof(attempts_cmd), 
-                             "SET_MAX_ATTEMPTS|%d|%d\n", created_room_id, max_attempts);
-                    send_message(attempts_cmd);
-                    
-                    // Đợi response (optional, không block UI)
-                    char attempts_buffer[BUFFER_SIZE];
-                    receive_message(attempts_buffer, sizeof(attempts_buffer));
-                }
-                
                 GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
@@ -423,6 +384,11 @@ void create_test_mode_screen()
 
     // Load danh sách phòng
     load_rooms_list();
+    
+    // Start listening for ROOM_CREATED broadcasts
+    broadcast_on_room_created(on_room_created_broadcast);
+    broadcast_start_listener();
+    printf("[ROOM_UI] Started listening for ROOM_CREATED broadcasts\n");
 
     // Signal connect
     if (create_btn) {

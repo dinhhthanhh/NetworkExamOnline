@@ -1,6 +1,7 @@
 #include "exam_ui.h"
 #include "net.h"
 #include "room_ui.h"
+#include "broadcast.h"
 #include <gtk/gtk.h>
 #include <time.h>
 
@@ -17,6 +18,10 @@ static GtkWidget *timer_label = NULL;
 static GtkWidget **question_radios = NULL; // Array of radio button groups
 static int total_questions = 0;
 
+// Waiting screen state
+static GtkWidget *waiting_dialog = NULL;
+static int waiting_room_id = 0;
+
 typedef struct {
     int question_id;
     char text[512];
@@ -24,6 +29,29 @@ typedef struct {
 } Question;
 
 static Question *questions = NULL;
+
+// Forward declarations
+static void start_exam_ui(int room_id);
+static void start_exam_ui_from_response(int room_id, char *buffer);
+
+// Callback when ROOM_STARTED broadcast received
+static void on_room_started_broadcast(int room_id, long start_time) {
+    printf("[EXAM_UI] Received ROOM_STARTED for room %d\n", room_id);
+    
+    // Check if we're waiting for this room
+    if (waiting_room_id == room_id && waiting_dialog != NULL) {
+        printf("[EXAM_UI] Closing waiting dialog and starting exam\n");
+        
+        // Close waiting dialog
+        gtk_dialog_response(GTK_DIALOG(waiting_dialog), GTK_RESPONSE_ACCEPT);
+        
+        // Stop listening to broadcasts
+        broadcast_stop_listener();
+        
+        // Start the actual exam
+        start_exam_ui(room_id);
+    }
+}
 
 // Timer callback - đếm ngược
 static gboolean update_timer(gpointer data) {
@@ -142,8 +170,14 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
              exam_room_id, question_id, selected);
     send_message(msg);
     
-    // Không cần đợi response để UX mượt hơn
-    printf("[DEBUG] Saved answer Q%d = %d\n", question_id, selected);
+    // QUAN TRỌNG: Phải đọc response để tránh bị lẫn buffer khi submit
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    if (n > 0 && strncmp(buffer, "SAVE_ANSWER_OK", 14) == 0) {
+        printf("[DEBUG] Saved answer Q%d = %d (confirmed)\n", question_id, selected);
+    } else {
+        printf("[DEBUG] Save answer warning: %s\n", buffer);
+    }
 }
 
 // Callback submit bài thi
@@ -246,6 +280,41 @@ void create_exam_page(int room_id) {
     
     printf("[DEBUG] BEGIN_EXAM response (%zd bytes): %s\n", n, buffer);
     
+    // ===== XỬ LÝ EXAM_WAITING (LOGIC MỚI) =====
+    if (n > 0 && strncmp(buffer, "EXAM_WAITING", 12) == 0) {
+        printf("[EXAM_UI] Entering waiting mode for room %d\n", room_id);
+        
+        waiting_room_id = room_id;
+        
+        // Register callback for ROOM_STARTED broadcast
+        broadcast_on_room_started(on_room_started_broadcast);
+        
+        // Start listening for broadcasts
+        broadcast_start_listener();
+        
+        // Show waiting dialog
+        waiting_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                               GTK_DIALOG_MODAL,
+                                               GTK_MESSAGE_INFO,
+                                               GTK_BUTTONS_CANCEL,
+                                               "⏳ Waiting for Host to Start");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(waiting_dialog),
+                                                 "You have joined the exam room.\nPlease wait for the host to start the exam.\n\nListening for broadcast...");
+        
+        int response = gtk_dialog_run(GTK_DIALOG(waiting_dialog));
+        gtk_widget_destroy(waiting_dialog);
+        waiting_dialog = NULL;
+        
+        if (response == GTK_RESPONSE_CANCEL || response == GTK_RESPONSE_DELETE_EVENT) {
+            // User cancelled - stop listening
+            broadcast_stop_listener();
+            waiting_room_id = 0;
+            printf("[EXAM_UI] User cancelled waiting\n");
+        }
+        
+        return;
+    }
+    
     if (n <= 0 || strncmp(buffer, "BEGIN_EXAM_OK", 13) != 0) {
         GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                          GTK_DIALOG_MODAL,
@@ -266,16 +335,53 @@ void create_exam_page(int room_id) {
         return;
     }
     
+    // Exam already started - proceed directly
+    start_exam_ui_from_response(room_id, buffer);
+}
+
+// Start exam UI after receiving BEGIN_EXAM_OK
+static void start_exam_ui(int room_id) {
+    exam_room_id = room_id;
+    
+    // Send BEGIN_EXAM again to get questions
+    char msg[64];
+    snprintf(msg, sizeof(msg), "BEGIN_EXAM|%d\n", room_id);
+    send_message(msg);
+    
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    printf("[DEBUG] BEGIN_EXAM response after broadcast (%zd bytes): %s\n", n, buffer);
+    
+    if (n <= 0 || strncmp(buffer, "BEGIN_EXAM_OK", 13) != 0) {
+        GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                                         GTK_DIALOG_MODAL,
+                                                         GTK_MESSAGE_ERROR,
+                                                         GTK_BUTTONS_OK,
+                                                         "❌ Cannot start exam");
+        gtk_dialog_run(GTK_DIALOG(error_dialog));
+        gtk_widget_destroy(error_dialog);
+        return;
+    }
+    
+    start_exam_ui_from_response(room_id, buffer);
+}
+
+// Common function to start exam UI from BEGIN_EXAM_OK response
+static void start_exam_ui_from_response(int room_id, char *buffer) {
+    
     // Lưu copy của buffer NGAY từ đầu
     char *original_buffer = strdup(buffer);
     
-    // Parse response: BEGIN_EXAM_OK|duration|q1_id:text:A:B:C:D|q2_id:...
+    // Parse response: BEGIN_EXAM_OK|remaining_seconds|q1_id:text:A:B:C:D|q2_id:...
+    // ===== ĐỔI TỪ DURATION (PHÚT) SANG REMAINING (GIÂY) =====
     char *ptr = buffer;
     strtok(ptr, "|"); // Skip "BEGIN_EXAM_OK"
-    exam_duration = atoi(strtok(NULL, "|"));
-    exam_start_time = time(NULL);
+    int remaining_seconds = atoi(strtok(NULL, "|"));
+    exam_duration = (remaining_seconds + 59) / 60; // Convert về phút (làm tròn lên)
+    exam_start_time = time(NULL) - (exam_duration * 60 - remaining_seconds); // Điều chỉnh start_time
     
-    printf("[DEBUG] Duration: %d minutes\n", exam_duration);
+    printf("[DEBUG] Remaining: %d seconds (~ %d minutes)\n", remaining_seconds, exam_duration);
     
     // Đếm số câu hỏi
     total_questions = 0;

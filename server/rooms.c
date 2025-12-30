@@ -1,6 +1,7 @@
 #include "rooms.h"
 #include "db.h"
 #include "results.h"
+#include "network.h"
 #include <sys/socket.h>
 
 extern ServerData server_data;
@@ -80,8 +81,8 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   // ===== INSERT VÀO DATABASE =====
   
   const char *sql_insert = 
-    "INSERT INTO rooms (name, host_id, duration, is_active) "
-    "VALUES (?, ?, ?, 1);";
+    "INSERT INTO rooms (name, host_id, duration, room_status, exam_start_time) "
+    "VALUES (?, ?, ?, 0, 0);";
   
   rc = sqlite3_prepare_v2(db, sql_insert, -1, &stmt, 0);
   
@@ -120,7 +121,8 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
       strncpy(server_data.rooms[idx].room_name, room_name, sizeof(server_data.rooms[idx].room_name) - 1);
       server_data.rooms[idx].creator_id = creator_id;
       server_data.rooms[idx].time_limit = time_limit;
-      server_data.rooms[idx].status = 1;  // active
+      server_data.rooms[idx].room_status = 0;  // WAITING - chưa bắt đầu
+      server_data.rooms[idx].exam_start_time = 0;
       server_data.rooms[idx].num_questions = 0;  // chưa có câu hỏi
       server_data.rooms[idx].participant_count = 0;
       
@@ -151,7 +153,11 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
 
   printf("[INFO] User %d created room '%s' (ID=%d)\n", 
          creator_id, room_name, room_id);
+  
   pthread_mutex_unlock(&server_data.lock);
+  
+  // ===== BROADCAST ROOM CREATED =====
+  broadcast_room_created(room_id, room_name, time_limit);
 }
 
 void list_test_rooms(int socket_fd) {
@@ -166,8 +172,7 @@ void list_test_rooms(int socket_fd) {
     "  r.duration, "
     "  r.is_active, "
     "  u.username, "
-    "  COUNT(q.id) as question_count, "
-    "  r.max_attempts "
+    "  COUNT(q.id) as question_count "
     "FROM rooms r "
     "JOIN users u ON r.host_id = u.id "
     "LEFT JOIN questions q ON r.id = q.room_id "
@@ -208,7 +213,6 @@ void list_test_rooms(int socket_fd) {
     // int is_active = sqlite3_column_int(stmt, 3);  // Unused
     const char *host = (const char*)sqlite3_column_text(stmt, 4);
     int question_count = sqlite3_column_int(stmt, 5);
-    int max_attempts = sqlite3_column_int(stmt, 6);
 
     const char *status_str = "Open";
 
@@ -218,17 +222,10 @@ void list_test_rooms(int socket_fd) {
     } else {
       snprintf(question_info, sizeof(question_info), "%d questions", question_count);
     }
-    
-    char attempts_info[50];
-    if (max_attempts > 0) {
-      snprintf(attempts_info, sizeof(attempts_info), "%d attempts max", max_attempts);
-    } else {
-      strcpy(attempts_info, "Unlimited");
-    }
 
     offset += snprintf(response + offset, sizeof(response) - offset,
-                       "ROOM|%d|%s|%d|%s|%s|%s|%s\n",
-                       room_id, room_name, duration, status_str, question_info, host, attempts_info);
+                       "ROOM|%d|%s|%d|%s|%s|%s\n",
+                       room_id, room_name, duration, status_str, question_info, host);
   }
 
   sqlite3_finalize(stmt);
@@ -240,9 +237,9 @@ void list_test_rooms(int socket_fd) {
 void join_test_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_lock(&server_data.lock);
 
-  // Kiểm tra room có tồn tại và lấy max_attempts
+  // Kiểm tra room có tồn tại
   sqlite3_stmt *stmt;
-  const char *sql_check = "SELECT is_active, max_attempts FROM rooms WHERE id = ?;";
+  const char *sql_check = "SELECT is_active FROM rooms WHERE id = ?;";
   int rc = sqlite3_prepare_v2(db, sql_check, -1, &stmt, 0);
   
   if (rc != SQLITE_OK) {
@@ -264,7 +261,6 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
   }
 
   int is_active = sqlite3_column_int(stmt, 0);
-  int max_attempts = sqlite3_column_int(stmt, 1);
   sqlite3_finalize(stmt);
 
   // Kiểm tra room có OPEN không
@@ -275,35 +271,42 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
     return;
   }
 
-  // Kiểm tra max_attempts (nếu > 0)
-  if (max_attempts > 0) {
-    // Đếm số lần user đã thi trong room này (từ results table)
-    char count_query[256];
-    snprintf(count_query, sizeof(count_query),
-             "SELECT COUNT(*) FROM results WHERE room_id = %d AND user_id = %d",
-             room_id, user_id);
-    
-    if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-        int attempt_count = sqlite3_column_int(stmt, 0);
-        sqlite3_finalize(stmt);
-        
-        if (attempt_count >= max_attempts) {
-          char response[128];
-          snprintf(response, sizeof(response),
-                   "JOIN_ROOM_FAIL|Maximum attempts reached (%d/%d)\n",
-                   attempt_count, max_attempts);
-          send(socket_fd, response, strlen(response), 0);
-          pthread_mutex_unlock(&server_data.lock);
-          return;
-        }
-      } else {
+  // ===== KIỂM TRA ĐÃ THI CHƯA (LOGIC MỚI) =====
+  // Kiểm tra trong bảng room_participants xem user đã thi room này chưa
+  char check_taken_query[256];
+  snprintf(check_taken_query, sizeof(check_taken_query),
+           "SELECT has_taken_exam FROM room_participants WHERE room_id = %d AND user_id = %d",
+           room_id, user_id);
+  
+  if (sqlite3_prepare_v2(db, check_taken_query, -1, &stmt, NULL) == SQLITE_OK) {
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+      int has_taken = sqlite3_column_int(stmt, 0);
+      sqlite3_finalize(stmt);
+      
+      if (has_taken == 1) {
+        char response[] = "JOIN_ROOM_FAIL|You have already taken this exam\n";
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+      }
+    } else {
+      // Chưa có record -> tạo mới với has_taken_exam = 0
+      sqlite3_finalize(stmt);
+      
+      const char *sql_insert_participant = 
+        "INSERT OR IGNORE INTO room_participants (room_id, user_id, has_taken_exam) "
+        "VALUES (?, ?, 0);";
+      
+      if (sqlite3_prepare_v2(db, sql_insert_participant, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, room_id);
+        sqlite3_bind_int(stmt, 2, user_id);
+        sqlite3_step(stmt);
         sqlite3_finalize(stmt);
       }
     }
   }
 
-  // Thêm user vào participants table
+  // Thêm user vào participants table (cho tracking thời gian bắt đầu)
   const char *sql_insert = 
     "INSERT OR IGNORE INTO participants (room_id, user_id, start_time) "
     "VALUES (?, ?, 0);";
@@ -340,6 +343,8 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+// REMOVED: set_room_max_attempts - not needed anymore
 void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_attempts) {
   pthread_mutex_lock(&server_data.lock);
   
@@ -394,6 +399,7 @@ void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_atte
   
   pthread_mutex_unlock(&server_data.lock);
 }
+*/
 
 void close_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_lock(&server_data.lock);
@@ -485,7 +491,7 @@ void list_my_rooms(int socket_fd, int user_id) {
     "  r.id, "
     "  r.name, "
     "  r.duration, "
-    "  r.is_active, "
+    "  r.room_status, "
     "  COUNT(q.id) as question_count "
     "FROM rooms r "
     "LEFT JOIN questions q ON r.id = q.room_id "
@@ -525,10 +531,17 @@ void list_my_rooms(int socket_fd, int user_id) {
     int room_id = sqlite3_column_int(stmt, 0);
     const char *room_name = (const char*)sqlite3_column_text(stmt, 1);
     int duration = sqlite3_column_int(stmt, 2);
-    int is_active = sqlite3_column_int(stmt, 3);
+    int room_status = sqlite3_column_int(stmt, 3);
     int question_count = sqlite3_column_int(stmt, 4);
 
-    const char *status_str = (is_active == 1) ? "Open" : "Closed";
+    const char *status_str;
+    if (room_status == 0) {
+      status_str = "Waiting";
+    } else if (room_status == 1) {
+      status_str = "Started";
+    } else {
+      status_str = "Ended";
+    }
 
     char question_info[50];
     if (question_count == 0) {
@@ -575,7 +588,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   }
 
   int host_id = sqlite3_column_int(stmt, 0);
-  int is_active = sqlite3_column_int(stmt, 1);
+  // int is_active = sqlite3_column_int(stmt, 1);  // Không cần check nữa
   sqlite3_finalize(stmt);
 
   // Kiểm tra quyền sở hữu
@@ -586,102 +599,92 @@ void start_test(int socket_fd, int user_id, int room_id) {
     return;
   }
 
-  // Kiểm tra room đã OPEN chưa
-  if (is_active == 1) {
-    char response[] = "START_ROOM_FAIL|Room already open\n";
-    send(socket_fd, response, strlen(response), 0);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
+  // Tìm room trong in-memory để update status
+  int room_idx = -1;
+  for (int i = 0; i < server_data.room_count; i++) {
+    if (server_data.rooms[i].room_id == room_id) {
+      room_idx = i;
+      break;
+    }
   }
-
-  // Update room status thành OPEN (is_active = 1)
-  const char *sql_update = "UPDATE rooms SET is_active = 1 WHERE id = ?;";
-  rc = sqlite3_prepare_v2(db, sql_update, -1, &stmt, 0);
   
-  if (rc != SQLITE_OK) {
-    char response[] = "START_ROOM_FAIL|Database error\n";
+  if (room_idx == -1) {
+    char response[] = "START_ROOM_FAIL|Room not loaded in memory\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  // Kiểm tra room đã bắt đầu chưa
+  if (server_data.rooms[room_idx].room_status == 1) {  // STARTED
+    char response[] = "START_ROOM_FAIL|Room already started\n";
     send(socket_fd, response, strlen(response), 0);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
 
-  sqlite3_bind_int(stmt, 1, room_id);
-  rc = sqlite3_step(stmt);
-  sqlite3_finalize(stmt);
-
-  if (rc != SQLITE_DONE) {
-    char response[] = "START_TEST_FAIL|Failed to start room\n";
+  // Kiểm tra room có câu hỏi chưa
+  char check_questions[256];
+  snprintf(check_questions, sizeof(check_questions),
+           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+  sqlite3_stmt *check_stmt;
+  int question_count = 0;
+  
+  if (sqlite3_prepare_v2(db, check_questions, -1, &check_stmt, NULL) == SQLITE_OK) {
+    if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+      question_count = sqlite3_column_int(check_stmt, 0);
+    }
+    sqlite3_finalize(check_stmt);
+  }
+  
+  if (question_count == 0) {
+    char response[] = "START_ROOM_FAIL|Room has no questions. Please add questions first.\n";
     send(socket_fd, response, strlen(response), 0);
     pthread_mutex_unlock(&server_data.lock);
     return;
+  }
+
+  // Update room status: WAITING -> STARTED (both in-memory and DB)
+  time_t start_time = time(NULL);
+  server_data.rooms[room_idx].room_status = 1;  // STARTED
+  server_data.rooms[room_idx].exam_start_time = start_time;
+
+  // Update database status
+  char update_sql[256];
+  snprintf(update_sql, sizeof(update_sql),
+           "UPDATE rooms SET room_status = 1 WHERE id = %d", room_id);
+  char *err_msg = NULL;
+  if (sqlite3_exec(db, update_sql, 0, 0, &err_msg) != SQLITE_OK) {
+    printf("[ERROR] Failed to update room status in DB: %s\n", err_msg);
+    sqlite3_free(err_msg);
   }
 
   char response[128];
-  snprintf(response, sizeof(response), "START_ROOM_OK|Room %d opened\n", room_id);
+  snprintf(response, sizeof(response), "START_ROOM_OK|Room %d started\n", room_id);
   send(socket_fd, response, strlen(response), 0);
 
   char log_details[128];
-  snprintf(log_details, sizeof(log_details), "Opened room ID=%d", room_id);
+  snprintf(log_details, sizeof(log_details), "Started exam in room ID=%d", room_id);
   log_activity(user_id, "START_ROOM", log_details);
   
-  printf("[INFO] User %d opened room %d\n", user_id, room_id);
+  printf("[INFO] User %d started exam in room %d\n", user_id, room_id);
+  
   pthread_mutex_unlock(&server_data.lock);
+  
+  // ===== BROADCAST ROOM STARTED =====
+  char broadcast_msg[256];
+  snprintf(broadcast_msg, sizeof(broadcast_msg), 
+           "ROOM_STARTED|%d|%ld\n", 
+           room_id, start_time);
+  broadcast_to_room_participants(room_id, broadcast_msg);
 }
 
-// User bắt đầu làm bài thi - Load questions và lưu start_time
+// User bắt đầu làm bài thi - Load questions và kiểm tra room status
 void handle_begin_exam(int socket_fd, int user_id, int room_id)
 {
     pthread_mutex_lock(&server_data.lock);
     
-    // Lấy thông tin room (duration, host_id, is_active)
-    char room_query[256];
-    snprintf(room_query, sizeof(room_query),
-             "SELECT duration, host_id, is_active FROM rooms WHERE id = %d", room_id);
-    
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, room_query, -1, &stmt, NULL) != SQLITE_OK) {
-        send(socket_fd, "ERROR|Database error\n", 21, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-    
-    int duration_minutes = 60;
-    int host_id = -1;
-    int is_active = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        duration_minutes = sqlite3_column_int(stmt, 0);
-        host_id = sqlite3_column_int(stmt, 1);
-        is_active = sqlite3_column_int(stmt, 2);
-    } else {
-        send(socket_fd, "ERROR|Room not found\n", 21, 0);
-        sqlite3_finalize(stmt);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-    sqlite3_finalize(stmt);
-    
-    // Kiểm tra room có OPEN không
-    if (is_active != 1) {
-        send(socket_fd, "ERROR|Room is closed\n", 22, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-    
-    // Kiểm tra user không phải host (host không được thi)
-    if (user_id == host_id) {
-        send(socket_fd, "ERROR|Host cannot take exam\n", 29, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
-    }
-    
-    // Thêm user vào participants trong DB (nếu chưa có)
-    char insert_query[256];
-    snprintf(insert_query, sizeof(insert_query),
-             "INSERT OR IGNORE INTO participants (room_id, user_id, start_time) "
-             "VALUES (%d, %d, 0)", room_id, user_id);
-    sqlite3_exec(db, insert_query, NULL, NULL, NULL);
-    
-    // Thêm user vào in-memory participants
+    // Tìm room trong in-memory
     int room_idx = -1;
     for (int i = 0; i < server_data.room_count; i++) {
         if (server_data.rooms[i].room_id == room_id) {
@@ -709,7 +712,8 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
                 }
                 server_data.rooms[room_idx].creator_id = sqlite3_column_int(room_stmt, 1);
                 server_data.rooms[room_idx].time_limit = sqlite3_column_int(room_stmt, 2);
-                server_data.rooms[room_idx].status = 1;
+                server_data.rooms[room_idx].room_status = 0;  // WAITING by default
+                server_data.rooms[room_idx].exam_start_time = 0;
                 
                 // Đếm số câu hỏi
                 char count_query[256];
@@ -730,14 +734,34 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
                        sizeof(server_data.rooms[room_idx].answers));
                 
                 server_data.room_count++;
-                printf("[BEGIN_EXAM] Loaded room %d into in-memory (idx=%d)\\n", room_id, room_idx);
+                printf("[BEGIN_EXAM] Loaded room %d into in-memory (idx=%d)\n", room_id, room_idx);
             }
             sqlite3_finalize(room_stmt);
         }
     }
     
-    if (room_idx != -1) {
-        TestRoom *room = &server_data.rooms[room_idx];
+    if (room_idx == -1) {
+        send(socket_fd, "ERROR|Room not found\n", 21, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    TestRoom *room = &server_data.rooms[room_idx];
+    
+    // Kiểm tra user không phải host
+    if (user_id == room->creator_id) {
+        send(socket_fd, "ERROR|Host cannot take exam\n", 29, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // ===== LOGIC MỚI: KIỂM TRA ROOM STATUS =====
+    
+    // Case 1: WAITING - Chưa bắt đầu
+    if (room->room_status == 0) {  // WAITING
+        send(socket_fd, "EXAM_WAITING|Waiting for host to start exam\n", 45, 0);
+        
+        // Thêm user vào participants để sẵn sàng
         int already_participant = 0;
         for (int i = 0; i < room->participant_count; i++) {
             if (room->participants[i] == user_id) {
@@ -749,37 +773,85 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         if (!already_participant && room->participant_count < MAX_CLIENTS) {
             room->participants[room->participant_count] = user_id;
             room->participant_count++;
-            
-            // Init answers cho user này thành -1
-            int user_idx = room->participant_count - 1;
-            for (int q = 0; q < MAX_QUESTIONS; q++) {
-                room->answers[user_idx][q].answer = -1;
-            }
-            printf("[BEGIN_EXAM] Added user %d to room %d in-memory (participant #%d)\n", 
-                   user_id, room_id, user_idx);
-        } else if (already_participant) {
-            printf("[BEGIN_EXAM] User %d already participant in room %d\n", user_id, room_id);
+            printf("[BEGIN_EXAM] User %d joined waiting room %d\n", user_id, room_id);
         }
-    } else {
-        printf("[BEGIN_EXAM] ERROR: Room %d not found in in-memory (room_count=%d)\n", 
-               room_id, server_data.room_count);
+        
+        pthread_mutex_unlock(&server_data.lock);
+        return;
     }
     
-    // Lấy danh sách câu hỏi (vẫn giữ lock để đảm bảo consistency)
+    // Case 2: ENDED - Đã kết thúc
+    if (room->room_status == 2) {  // ENDED
+        send(socket_fd, "ERROR|Exam has ended\n", 21, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Case 3: STARTED - Đang thi
+    if (room->room_status != 1) {
+        send(socket_fd, "ERROR|Invalid room status\n", 26, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Tính thời gian còn lại
+    time_t now = time(NULL);
+    long elapsed = now - room->exam_start_time;
+    long duration_seconds = room->time_limit * 60;
+    long remaining = duration_seconds - elapsed;
+    
+    if (remaining <= 0) {
+        send(socket_fd, "ERROR|Exam time expired\n", 24, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Thêm user vào participants nếu chưa có
+    int already_participant = 0;
+    for (int i = 0; i < room->participant_count; i++) {
+        if (room->participants[i] == user_id) {
+            already_participant = 1;
+            break;
+        }
+    }
+    
+    if (!already_participant && room->participant_count < MAX_CLIENTS) {
+        room->participants[room->participant_count] = user_id;
+        room->participant_count++;
+        
+        // Init answers cho user này thành -1
+        int user_idx = room->participant_count - 1;
+        for (int q = 0; q < MAX_QUESTIONS; q++) {
+            room->answers[user_idx][q].answer = -1;
+        }
+        printf("[BEGIN_EXAM] User %d joined started exam in room %d (late join, %ld sec remaining)\n", 
+               user_id, room_id, remaining);
+    }
+    
+    // Lưu start_time cho user này trong DB
+    char update_query[512];
+    snprintf(update_query, sizeof(update_query),
+             "INSERT OR REPLACE INTO participants (room_id, user_id, start_time) "
+             "VALUES (%d, %d, %ld)",
+             room_id, user_id, now);
+    sqlite3_exec(db, update_query, NULL, NULL, NULL);
+    
+    // Lấy danh sách câu hỏi
     char question_query[256];
     snprintf(question_query, sizeof(question_query),
              "SELECT id, question_text, option_a, option_b, option_c, option_d "
              "FROM questions WHERE room_id = %d", room_id);
     
+    sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, question_query, -1, &stmt, NULL) != SQLITE_OK) {
         send(socket_fd, "ERROR|Cannot load questions\n", 28, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
     
-    // Format: BEGIN_EXAM_OK|duration|q1_id:q1_text:optA:optB:optC:optD|q2_id:...
+    // Format: BEGIN_EXAM_OK|remaining_seconds|q1_id:q1_text:optA:optB:optC:optD|q2_id:...
     char response[8192];
-    snprintf(response, sizeof(response), "BEGIN_EXAM_OK|%d", duration_minutes);
+    snprintf(response, sizeof(response), "BEGIN_EXAM_OK|%ld", remaining);
     
     int question_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -790,7 +862,6 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         const char *opt_c = (const char *)sqlite3_column_text(stmt, 4);
         const char *opt_d = (const char *)sqlite3_column_text(stmt, 5);
         
-        // Escape pipe characters in text
         char q_entry[1024];
         snprintf(q_entry, sizeof(q_entry), "|%d:%s:%s:%s:%s:%s",
                  q_id, q_text, opt_a, opt_b, opt_c, opt_d);
@@ -806,21 +877,13 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         return;
     }
     
-    // Lưu thời gian bắt đầu
-    time_t start_time = time(NULL);
-    char update_query[512];
-    snprintf(update_query, sizeof(update_query),
-             "UPDATE participants SET start_time = %ld WHERE room_id = %d AND user_id = %d",
-             start_time, room_id, user_id);
-    sqlite3_exec(db, update_query, NULL, NULL, NULL);
-    
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[INFO] User %d started exam in room %d (%d questions, %d min)\n", 
-           user_id, room_id, question_count, duration_minutes);
+    printf("[INFO] User %d began exam in room %d (%d questions, %ld sec remaining)\n", 
+           user_id, room_id, question_count, remaining);
     
-    pthread_mutex_unlock(&server_data.lock);  // Unlock duy nhất ở cuối
+    pthread_mutex_unlock(&server_data.lock);
 }
 
 void handle_resume_exam(int socket_fd, int user_id, int room_id)
@@ -975,7 +1038,8 @@ void load_rooms_from_db(void) {
             }
             server_data.rooms[idx].creator_id = sqlite3_column_int(stmt, 2);
             server_data.rooms[idx].time_limit = sqlite3_column_int(stmt, 3);
-            server_data.rooms[idx].status = sqlite3_column_int(stmt, 4);
+            server_data.rooms[idx].room_status = 0;  // Reset về WAITING
+            server_data.rooms[idx].exam_start_time = 0;
             
             // Đếm số câu hỏi
             char count_query[256];

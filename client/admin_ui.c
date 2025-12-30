@@ -8,6 +8,12 @@
 
 void request_user_rooms(GtkWidget *room_combo)
 {
+    // Clear existing items first
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(room_combo));
+    
+    // Flush old socket data to prevent stale responses
+    flush_socket_buffer(client.socket_fd);
+    
     char request[256];
     snprintf(request, sizeof(request), "GET_USER_ROOMS|%d\n", current_user_id);
     send_message(request);
@@ -17,9 +23,12 @@ void request_user_rooms(GtkWidget *room_combo)
     ssize_t n = receive_message(buffer, sizeof(buffer));
     if (n > 0) {
         buffer[n] = '\0';
+        printf("[DEBUG] GET_USER_ROOMS response: %s\n", buffer);
+        
         // Parse: ROOMS_LIST|room_id1:room_name1|room_id2:room_name2|...
         if (strstr(buffer, "ROOMS_LIST")) {
             char *token = strtok(buffer + 11, "|"); // skip "ROOMS_LIST|"
+            int room_count = 0;
             while (token != NULL) {
                 char *colon = strchr(token, ':');
                 if (colon) {
@@ -27,10 +36,14 @@ void request_user_rooms(GtkWidget *room_combo)
                     char *room_id = token;
                     char *room_name = colon + 1;
                     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), room_id, room_name);
+                    room_count++;
                 }
                 token = strtok(NULL, "|");
             }
-            gtk_combo_box_set_active(GTK_COMBO_BOX(room_combo), 0);
+            if (room_count > 0) {
+                gtk_combo_box_set_active(GTK_COMBO_BOX(room_combo), 0);
+                gtk_widget_set_sensitive(room_combo, TRUE);
+            }
         } else if (strstr(buffer, "NO_ROOMS")) {
             gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), "-1", "No rooms created yet");
             gtk_widget_set_sensitive(room_combo, FALSE);
@@ -505,20 +518,18 @@ void create_admin_panel()
                 gtk_label_set_xalign(GTK_LABEL(info_label), 0);
                 gtk_box_pack_start(GTK_BOX(hbox), info_label, TRUE, TRUE, 0);
 
-                // Action buttons - luôn hiển thị dựa trên status
+                // Action buttons - hiển thị dựa trên status
                 GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
                 
-                if (strcmp(status, "Open") == 0) {
-                    // Room đang Open - hiển thị button CLOSE
-                    GtkWidget *close_btn = gtk_button_new_with_label("🔒 CLOSE");
-                    style_button(close_btn, "#e74c3c");
-                    gtk_widget_set_size_request(close_btn, 120, 40);
-                    g_signal_connect(close_btn, "clicked", 
-                                   G_CALLBACK(on_close_room_clicked), 
-                                   GINT_TO_POINTER(room_id));
-                    gtk_box_pack_start(GTK_BOX(btn_box), close_btn, FALSE, FALSE, 0);
-                } else {
-                    // Room đang Closed - hiển thị button OPEN
+                if (strcmp(status, "Started") == 0) {
+                    // Room đã Started - chỉ hiển thị status, không có nút
+                    GtkWidget *status_btn = gtk_button_new_with_label("✅ STARTED");
+                    style_button(status_btn, "#95a5a6");
+                    gtk_widget_set_size_request(status_btn, 120, 40);
+                    gtk_widget_set_sensitive(status_btn, FALSE);
+                    gtk_box_pack_start(GTK_BOX(btn_box), status_btn, FALSE, FALSE, 0);
+                } else if (strcmp(status, "Closed") == 0 || strcmp(status, "Waiting") == 0) {
+                    // Room đang Closed/Waiting - hiển thị button OPEN
                     GtkWidget *open_btn = gtk_button_new_with_label("🔓 OPEN");
                     style_button(open_btn, "#27ae60");
                     gtk_widget_set_size_request(open_btn, 120, 40);
@@ -526,6 +537,15 @@ void create_admin_panel()
                                    G_CALLBACK(on_start_room_clicked), 
                                    GINT_TO_POINTER(room_id));
                     gtk_box_pack_start(GTK_BOX(btn_box), open_btn, FALSE, FALSE, 0);
+                } else if (strcmp(status, "Open") == 0) {
+                    // Room đang Open (shouldn't happen with new logic) - hiển thị CLOSE
+                    GtkWidget *close_btn = gtk_button_new_with_label("🔒 CLOSE");
+                    style_button(close_btn, "#e74c3c");
+                    gtk_widget_set_size_request(close_btn, 120, 40);
+                    g_signal_connect(close_btn, "clicked", 
+                                   G_CALLBACK(on_close_room_clicked), 
+                                   GINT_TO_POINTER(room_id));
+                    gtk_box_pack_start(GTK_BOX(btn_box), close_btn, FALSE, FALSE, 0);
                 }
                 
                 gtk_box_pack_end(GTK_BOX(hbox), btn_box, FALSE, FALSE, 0);
@@ -1022,19 +1042,6 @@ void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
     gtk_grid_attach(GTK_GRID(grid), time_label, 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), time_spin, 1, 1, 1, 1);
 
-    // Max attempts (0 = unlimited)
-    GtkWidget *attempts_label = gtk_label_new("Max Attempts:");
-    GtkWidget *attempts_spin = gtk_spin_button_new_with_range(0, 10, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(attempts_spin), 0);
-    gtk_grid_attach(GTK_GRID(grid), attempts_label, 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), attempts_spin, 1, 2, 1, 1);
-    
-    // Tooltip
-    GtkWidget *attempts_hint = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(attempts_hint), 
-        "<span size='small' foreground='#7f8c8d'>0 = Unlimited attempts</span>");
-    gtk_grid_attach(GTK_GRID(grid), attempts_hint, 1, 3, 1, 1);
-
     gtk_widget_show_all(dialog);
 
     int response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -1042,7 +1049,6 @@ void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
     {
         const char *room_name = gtk_entry_get_text(GTK_ENTRY(name_entry));
         int time_limit = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(time_spin));
-        int max_attempts = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(attempts_spin));
 
         if (strlen(room_name) > 0)
         {
@@ -1055,25 +1061,6 @@ void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
 
             if (n > 0 && strstr(buffer, "CREATE_ROOM_OK"))
             {
-                // Parse room_id từ response: CREATE_ROOM_OK|room_id|name|...
-                char *response_copy = strdup(buffer);
-                strtok(response_copy, "|"); // Skip "CREATE_ROOM_OK"
-                char *room_id_str = strtok(NULL, "|");
-                int created_room_id = room_id_str ? atoi(room_id_str) : -1;
-                free(response_copy);
-                
-                // Set max_attempts nếu khác 0
-                if (max_attempts > 0 && created_room_id > 0) {
-                    char attempts_cmd[128];
-                    snprintf(attempts_cmd, sizeof(attempts_cmd), 
-                             "SET_MAX_ATTEMPTS|%d|%d\n", created_room_id, max_attempts);
-                    send_message(attempts_cmd);
-                    
-                    // Đợi response
-                    char attempts_buffer[BUFFER_SIZE];
-                    receive_message(attempts_buffer, sizeof(attempts_buffer));
-                }
-                
                 GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,

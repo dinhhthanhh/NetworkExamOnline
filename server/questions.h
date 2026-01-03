@@ -18,5 +18,6 @@ void handle_get_user_rooms(int client_socket, int user_id);
 void handle_add_question(int client_socket, char *data);
 int import_questions_from_csv(const char *filename, int room_id);
 void handle_import_csv(int client_socket, char *data);
+void randomize_room_questions_by_difficulty(int room_id);
 
 #endif

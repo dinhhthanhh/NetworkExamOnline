@@ -13,7 +13,7 @@ void handle_get_user_rooms(int client_socket, int user_id)
 {
     char query[256];
     snprintf(query, sizeof(query), 
-             "SELECT id, name FROM rooms WHERE host_id = %d AND is_active = 1", 
+             "SELECT id, name, is_practice FROM rooms WHERE host_id = %d AND is_active = 1", 
              user_id);
     
     sqlite3_stmt *stmt;
@@ -29,9 +29,11 @@ void handle_get_user_rooms(int client_socket, int user_id)
         has_rooms = 1;
         int room_id = sqlite3_column_int(stmt, 0);
         const char *room_name = (const char *)sqlite3_column_text(stmt, 1);
+        int is_practice = sqlite3_column_int(stmt, 2);
         
-        char room_entry[256];
-        snprintf(room_entry, sizeof(room_entry), "|%d:%s", room_id, room_name);
+        char room_entry[300];
+        snprintf(room_entry, sizeof(room_entry), "|%d:%s:%d", 
+                 room_id, room_name, is_practice);
         strcat(response, room_entry);
     }
     
@@ -479,4 +481,72 @@ void handle_import_csv(int client_socket, char *data)
         send(client_socket, response, strlen(response), 0);
         printf("[INFO] Import completed: %d questions\n", imported);
     }
+}
+
+// Random chọn câu hỏi theo tỉ lệ difficulty và tạo đề thi cho room
+// Được gọi khi admin bấm START (hoặc khi tạo practice room)
+void randomize_room_questions_by_difficulty(int room_id) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    // Lấy thông tin room từ DB
+    const char *sql_room = "SELECT easy_count, medium_count, hard_count FROM rooms WHERE id = ?";
+    sqlite3_stmt *stmt;
+    int easy_needed = 0, medium_needed = 0, hard_needed = 0;
+    
+    if (sqlite3_prepare_v2(db, sql_room, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, room_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            easy_needed = sqlite3_column_int(stmt, 0);
+            medium_needed = sqlite3_column_int(stmt, 1);
+            hard_needed = sqlite3_column_int(stmt, 2);
+        }
+        sqlite3_finalize(stmt);
+    }
+    
+    // Nếu không có tỉ lệ được set, không làm gì (dùng toàn bộ câu hỏi đã add)
+    if (easy_needed == 0 && medium_needed == 0 && hard_needed == 0) {
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    printf("[RANDOM] Room %d: Need %d easy, %d medium, %d hard\n", 
+           room_id, easy_needed, medium_needed, hard_needed);
+    
+    // Xóa các câu hỏi cũ của room (nếu có)
+    char delete_query[256];
+    snprintf(delete_query, sizeof(delete_query),
+             "DELETE FROM questions WHERE room_id = %d", room_id);
+    sqlite3_exec(db, delete_query, NULL, NULL, NULL);
+    
+    // Random chọn câu easy
+    char sql_random[512];
+    snprintf(sql_random, sizeof(sql_random),
+             "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+             "SELECT %d, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category "
+             "FROM questions WHERE difficulty = 'Easy' AND room_id = 0 "
+             "ORDER BY RANDOM() LIMIT %d",
+             room_id, easy_needed);
+    sqlite3_exec(db, sql_random, NULL, NULL, NULL);
+    
+    // Random chọn câu medium
+    snprintf(sql_random, sizeof(sql_random),
+             "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+             "SELECT %d, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category "
+             "FROM questions WHERE difficulty = 'Medium' AND room_id = 0 "
+             "ORDER BY RANDOM() LIMIT %d",
+             room_id, medium_needed);
+    sqlite3_exec(db, sql_random, NULL, NULL, NULL);
+    
+    // Random chọn câu hard
+    snprintf(sql_random, sizeof(sql_random),
+             "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+             "SELECT %d, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category "
+             "FROM questions WHERE difficulty = 'Hard' AND room_id = 0 "
+             "ORDER BY RANDOM() LIMIT %d",
+             room_id, hard_needed);
+    sqlite3_exec(db, sql_random, NULL, NULL, NULL);
+    
+    printf("[RANDOM] Room %d: Questions randomized successfully\n", room_id);
+    
+    pthread_mutex_unlock(&server_data.lock);
 }

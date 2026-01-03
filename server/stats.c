@@ -10,9 +10,11 @@ void get_leaderboard(int socket_fd, int limit)
   char query[500];
   sqlite3_stmt *stmt;
 
+  // Chỉ lấy user có role = 'user' (không lấy admin)
   snprintf(query, sizeof(query),
            "SELECT u.id, u.username, COALESCE(SUM(r.score), 0) as total_score, COUNT(r.id) as tests_completed "
            "FROM users u LEFT JOIN results r ON u.id = r.user_id "
+           "WHERE u.role = 'user' "
            "GROUP BY u.id ORDER BY total_score DESC LIMIT %d;",
            limit);
 
@@ -24,6 +26,9 @@ void get_leaderboard(int socket_fd, int limit)
     strcpy(response, "LEADERBOARD|");
 
     int rank = 1;
+    int display_rank = 1;
+    int prev_score = -1;
+    
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
       // int user_id = sqlite3_column_int(stmt, 0);  // Unused - commented out
@@ -31,9 +36,15 @@ void get_leaderboard(int socket_fd, int limit)
       int total_score = sqlite3_column_int(stmt, 2);
       int tests_completed = sqlite3_column_int(stmt, 3);
 
+      // If score is same as previous, use same display_rank
+      if (total_score != prev_score) {
+        display_rank = rank;
+        prev_score = total_score;
+      }
+
       char entry[300];
-      snprintf(entry, sizeof(entry), "#%d|%s|Score:%d|Tests:%d|",
-               rank, username, total_score, tests_completed);
+      snprintf(entry, sizeof(entry), "%d|%s|Score:%d|Tests:%d|",
+               display_rank, username, total_score, tests_completed);
       strcat(response, entry);
       rank++;
     }
@@ -197,5 +208,141 @@ void get_user_test_history(int socket_fd, int user_id)
   }
 
   sqlite3_finalize(stmt);
+  pthread_mutex_unlock(&server_data.lock);
+}
+
+// Get detailed statistics for a specific room (for admin)
+void get_room_statistics(int socket_fd, int room_id, int requesting_user_id)
+{
+  pthread_mutex_lock(&server_data.lock);
+
+  // Verify user is admin or room owner
+  sqlite3_stmt *stmt;
+  const char *check_sql = "SELECT host_id FROM rooms WHERE id = ?;";
+  
+  if (sqlite3_prepare_v2(db, check_sql, -1, &stmt, NULL) != SQLITE_OK) {
+    char response[] = "ROOM_STATS_ERROR|Database error\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+
+  sqlite3_bind_int(stmt, 1, room_id);
+  
+  if (sqlite3_step(stmt) != SQLITE_ROW) {
+    char response[] = "ROOM_STATS_ERROR|Room not found\n";
+    send(socket_fd, response, strlen(response), 0);
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+
+  int host_id = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+
+  // Check if requesting user is the host
+  if (host_id != requesting_user_id) {
+    char response[] = "ROOM_STATS_ERROR|Permission denied\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+
+  char response[16384];
+  int offset = 0;
+
+  // Room header info
+  offset += snprintf(response + offset, sizeof(response) - offset, "ROOM_STATS|%d|", room_id);
+
+  // Get participants and their status
+  // Status: 0=Not started, 1=Taking exam (in participants), 2=Submitted
+  const char *participants_sql = 
+    "SELECT "
+    "  u.id, "
+    "  u.username, "
+    "  p.start_time, "
+    "  r.score, "
+    "  r.total_questions, "
+    "  r.completed_at, "
+    "  CASE "
+    "    WHEN r.id IS NOT NULL THEN 'Submitted' "
+    "    WHEN p.start_time > 0 THEN 'Taking' "
+    "    ELSE 'Waiting' "
+    "  END as status "
+    "FROM users u "
+    "LEFT JOIN participants p ON u.id = p.user_id AND p.room_id = ? "
+    "LEFT JOIN results r ON u.id = r.user_id AND r.room_id = ? "
+    "WHERE u.id IN ("
+    "  SELECT user_id FROM participants WHERE room_id = ? "
+    "  UNION "
+    "  SELECT user_id FROM results WHERE room_id = ?"
+    ") "
+    "ORDER BY "
+    "  CASE "
+    "    WHEN r.id IS NOT NULL THEN 0 "
+    "    WHEN p.start_time > 0 THEN 1 "
+    "    ELSE 2 "
+    "  END, "
+    "  u.username;";
+
+  if (sqlite3_prepare_v2(db, participants_sql, -1, &stmt, NULL) == SQLITE_OK) {
+    sqlite3_bind_int(stmt, 1, room_id);
+    sqlite3_bind_int(stmt, 2, room_id);
+    sqlite3_bind_int(stmt, 3, room_id);
+    sqlite3_bind_int(stmt, 4, room_id);
+
+    int total_participants = 0;
+    int currently_taking = 0;
+    int submitted = 0;
+    double total_score = 0.0;
+    int scored_count = 0;
+
+    // Participants data
+    offset += snprintf(response + offset, sizeof(response) - offset, "PARTICIPANTS|");
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      int user_id = sqlite3_column_int(stmt, 0);
+      const char *username = (const char *)sqlite3_column_text(stmt, 1);
+      int score = sqlite3_column_int(stmt, 3);
+      int total_questions = sqlite3_column_int(stmt, 4);
+      const char *completed_at = (const char *)sqlite3_column_text(stmt, 5);
+      const char *status = (const char *)sqlite3_column_text(stmt, 6);
+
+      total_participants++;
+      
+      if (strcmp(status, "Taking") == 0) {
+        currently_taking++;
+      } else if (strcmp(status, "Submitted") == 0) {
+        submitted++;
+        if (total_questions > 0) {
+          total_score += (score * 100.0 / total_questions);
+          scored_count++;
+        }
+      }
+
+      // Format: user_id:username:status:score:total_questions:completed_at|
+      offset += snprintf(response + offset, sizeof(response) - offset,
+                        "%d:%s:%s:%d:%d:%s|",
+                        user_id, username, status, 
+                        score, total_questions,
+                        completed_at ? completed_at : "N/A");
+    }
+
+    sqlite3_finalize(stmt);
+
+    // Calculate average score
+    double avg_score = (scored_count > 0) ? (total_score / scored_count) : 0.0;
+
+    // Add summary statistics
+    offset += snprintf(response + offset, sizeof(response) - offset,
+                      "SUMMARY|Total:%d|Taking:%d|Submitted:%d|AvgScore:%.2f\n",
+                      total_participants, currently_taking, submitted, avg_score);
+
+    send(socket_fd, response, offset, 0);
+  } else {
+    char error_response[] = "ROOM_STATS_ERROR|Failed to query participants\n";
+    send(socket_fd, error_response, strlen(error_response), 0);
+  }
+
   pthread_mutex_unlock(&server_data.lock);
 }

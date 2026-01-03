@@ -126,10 +126,39 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     room->answers[user_idx][question_idx].answer = selected_answer;
     room->answers[user_idx][question_idx].submit_time = time(NULL);
     
-    send(socket_fd, "SAVE_ANSWER_OK\n", 16, 0);
-    
-    printf("[MEMORY] User %d answered Q%d = %d in room %d (in-memory)\n", 
-           user_id, question_idx, selected_answer, room_id);
+    // **PRACTICE MODE: Nếu show_answer = 1, trả về đáp án đúng**
+    if (room->is_practice && room->show_answer) {
+        // Lấy correct answer từ DB
+        char get_correct[256];
+        snprintf(get_correct, sizeof(get_correct),
+                 "SELECT correct_answer FROM questions WHERE id = %d", question_id);
+        
+        sqlite3_stmt *correct_stmt;
+        int correct_answer = -1;
+        if (sqlite3_prepare_v2(db, get_correct, -1, &correct_stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(correct_stmt) == SQLITE_ROW) {
+                correct_answer = sqlite3_column_int(correct_stmt, 0);
+            }
+            sqlite3_finalize(correct_stmt);
+        }
+        
+        int is_correct = (selected_answer == correct_answer) ? 1 : 0;
+        
+        char response[64];
+        snprintf(response, sizeof(response), "SAVE_ANSWER_OK|%d|%d\n", 
+                 is_correct, correct_answer);
+        send(socket_fd, response, strlen(response), 0);
+        
+        printf("[PRACTICE] User %d answered Q%d = %d, correct = %d (%s)\n", 
+               user_id, question_idx, selected_answer, correct_answer,
+               is_correct ? "CORRECT" : "WRONG");
+    } else {
+        // Normal exam mode - không trả về đáp án
+        send(socket_fd, "SAVE_ANSWER_OK\n", 16, 0);
+        
+        printf("[MEMORY] User %d answered Q%d = %d in room %d (in-memory)\n", 
+               user_id, question_idx, selected_answer, room_id);
+    }
     
     // **AUTO-SAVE mỗi 5 câu hoặc câu cuối**
     int answered_count = 0;
@@ -178,6 +207,26 @@ void submit_answer(int socket_fd, int user_id, int room_id, int question_num, in
 void submit_test(int socket_fd, int user_id, int room_id)
 {
   pthread_mutex_lock(&server_data.lock);
+
+  // Kiểm tra role - admin không được submit test
+  char role_query[256];
+  snprintf(role_query, sizeof(role_query),
+           "SELECT role FROM users WHERE id = %d", user_id);
+  
+  sqlite3_stmt *stmt_role;
+  if (sqlite3_prepare_v2(db, role_query, -1, &stmt_role, NULL) == SQLITE_OK) {
+    if (sqlite3_step(stmt_role) == SQLITE_ROW) {
+      const char *role = (const char *)sqlite3_column_text(stmt_role, 0);
+      if (role && strcmp(role, "admin") == 0) {
+        char response[] = "SUBMIT_TEST_FAIL|Admin cannot submit test results\n";
+        send(socket_fd, response, strlen(response), 0);
+        sqlite3_finalize(stmt_role);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+      }
+    }
+    sqlite3_finalize(stmt_role);
+  }
 
   // **FLUSH tất cả đáp án từ in-memory vào DB trước khi tính điểm**
   int room_idx = find_room_index(room_id);

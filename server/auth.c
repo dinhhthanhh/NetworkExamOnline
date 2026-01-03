@@ -105,6 +105,24 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
       }
 
       // Kiểm tra user đã online chưa (chống đăng nhập đồng thời)
+      // BƯỚC 1: Cleanup tất cả stale online status TRƯỚC
+      for (int i = 0; i < server_data.user_count; i++)
+      {
+        if (server_data.users[i].user_id == *user_id)
+        {
+          // Clean up stale online status (is_online = 1 nhưng socket không hợp lệ)
+          if (server_data.users[i].is_online == 1 && server_data.users[i].socket_fd <= 0)
+          {
+            printf("[LOGIN_CLEANUP] Cleaning stale online status for user %s (ID: %d) at index %d\n", 
+                   username, *user_id, i);
+            server_data.users[i].is_online = 0;
+            server_data.users[i].socket_fd = -1;
+            memset(server_data.users[i].session_token, 0, sizeof(server_data.users[i].session_token));
+          }
+        }
+      }
+      
+      // BƯỚC 2: SAU KHI cleanup, kiểm tra xem có user nào thực sự online không
       int already_online = 0;
       int duplicate_count = 0;
       for (int i = 0; i < server_data.user_count; i++)
@@ -115,7 +133,8 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
           printf("[LOGIN_DEBUG] Found user %s (ID: %d) in memory at index %d: is_online=%d, socket_fd=%d\n",
                  username, *user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
           
-          if (server_data.users[i].is_online == 1)
+          // Chỉ coi là online nếu BOTH is_online == 1 VÀ socket_fd > 0
+          if (server_data.users[i].is_online == 1 && server_data.users[i].socket_fd > 0)
           {
             already_online = 1;
             printf("[LOGIN_BLOCKED] User %s (ID: %d) is already online from socket %d\n", 

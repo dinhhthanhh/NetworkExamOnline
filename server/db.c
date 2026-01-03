@@ -61,6 +61,11 @@ void init_database() {
                             "is_active INTEGER DEFAULT 1,"  // 1: đang mở, 0: đã đóng (deprecated)
                             "room_status INTEGER DEFAULT 0,"  // 0=WAITING, 1=STARTED, 2=ENDED
                             "exam_start_time INTEGER DEFAULT 0,"  // Unix timestamp khi host start
+                            "is_practice INTEGER DEFAULT 0,"  // 0=exam, 1=practice
+                            "show_answer INTEGER DEFAULT 0,"  // 1=hiển thị đáp án ngay (chỉ practice)
+                            "easy_count INTEGER DEFAULT 0,"  // Số câu easy cần random
+                            "medium_count INTEGER DEFAULT 0,"  // Số câu medium cần random
+                            "hard_count INTEGER DEFAULT 0,"  // Số câu hard cần random
                             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                             "FOREIGN KEY(host_id) REFERENCES users(id) ON DELETE CASCADE"
                             ");";
@@ -135,6 +140,35 @@ void init_database() {
     "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';";
   
   sqlite3_exec(db, sql_alter_users, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột is_practice vào rooms (0=exam thật, 1=practice)
+  const char *sql_alter_is_practice = 
+    "ALTER TABLE rooms ADD COLUMN is_practice INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_is_practice, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột show_answer vào rooms (chỉ dùng cho practice)
+  const char *sql_alter_show_answer = 
+    "ALTER TABLE rooms ADD COLUMN show_answer INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_show_answer, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột easy_count, medium_count, hard_count để lưu tỉ lệ câu hỏi
+  const char *sql_alter_difficulty_counts = 
+    "ALTER TABLE rooms ADD COLUMN easy_count INTEGER DEFAULT 0;"
+    "ALTER TABLE rooms ADD COLUMN medium_count INTEGER DEFAULT 0;"
+    "ALTER TABLE rooms ADD COLUMN hard_count INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_difficulty_counts, 0, 0, &err_msg);
   if (err_msg) {
     sqlite3_free(err_msg);
     err_msg = NULL;

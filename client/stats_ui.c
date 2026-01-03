@@ -26,13 +26,9 @@ GArray* parse_leaderboard_data(const char *buffer) {
     while (token != NULL) {
         LeaderboardEntry entry;
         
-        // Lấy rank
-        if (token[0] == '#') {
-            strncpy(entry.rank, token, sizeof(entry.rank) - 1);
-            entry.rank[sizeof(entry.rank) - 1] = '\0';
-        } else {
-            break;
-        }
+        // Lấy rank (now just a number, not #number)
+        entry.rank_num = atoi(token);
+        snprintf(entry.rank, sizeof(entry.rank), "%d", entry.rank_num);
         
         // Lấy username
         token = strtok(NULL, "|");
@@ -352,7 +348,7 @@ void create_stats_screen()
             }
             
             if (f == 6) {
-                int result_id = atoi(fields[0]);
+                // int result_id = atoi(fields[0]);  // Unused for display
                 char *room_name = fields[1];
                 int score = atoi(fields[2]);
                 int total = atoi(fields[3]);
@@ -366,9 +362,9 @@ void create_stats_screen()
                 gtk_widget_set_margin_top(test_row, 5);
                 gtk_widget_set_margin_bottom(test_row, 5);
                 
-                // Icon và room name
-                char room_text[256];
-                snprintf(room_text, sizeof(room_text), "📚 %s", room_name);
+                // Icon and room name
+                char room_text[300];  // Increased buffer size for safety
+                snprintf(room_text, sizeof(room_text), "%s", room_name);
                 GtkWidget *room_label = gtk_label_new(room_text);
                 gtk_label_set_xalign(GTK_LABEL(room_label), 0.0);
                 gtk_widget_set_size_request(room_label, 250, -1);
@@ -389,8 +385,8 @@ void create_stats_screen()
                 gtk_widget_set_size_request(time_label, 120, -1);
                 
                 // Date
-                char date_text[128];
-                snprintf(date_text, sizeof(date_text), "📅 %s", completed);
+                char date_text[300];  // Increased buffer size for safety
+                snprintf(date_text, sizeof(date_text), "%s", completed);
                 GtkWidget *date_label = gtk_label_new(date_text);
                 
                 gtk_box_pack_start(GTK_BOX(test_row), room_label, FALSE, FALSE, 0);
@@ -443,24 +439,15 @@ void create_leaderboard_screen() {
 
     // Title với icon
     GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *trophy_icon = gtk_label_new("🏆");
-    gtk_widget_set_name(trophy_icon, "trophy-icon");
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-        "<span foreground='#2c3e50' weight='bold' size='20480'>LEADERBOARD - TOP PLAYERS</span>");
+        "<span foreground='#2c3e50' weight='bold' size='20480'>RANK - TOP PLAYERS</span>");
     
-    gtk_box_pack_start(GTK_BOX(title_box), trophy_icon, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(title_box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), title_box, FALSE, FALSE, 5);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 10);
-
-    // Thông tin cập nhật
-    GtkWidget *info_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(info_label), 
-        "<span foreground='#7f8c8d' size='small'>📊 Updated in real-time • Based on total score</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 5);
 
     // Main container cho leaderboard
     GtkWidget *main_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -473,10 +460,10 @@ void create_leaderboard_screen() {
     GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_name(header_box, "leaderboard-header");
     
-    GtkWidget *rank_header = gtk_label_new("🏅 RANK");
-    GtkWidget *user_header = gtk_label_new("👤 PLAYER");
-    GtkWidget *score_header = gtk_label_new("⭐ SCORE");
-    GtkWidget *tests_header = gtk_label_new("📝 TESTS");
+    GtkWidget *rank_header = gtk_label_new("RANK");
+    GtkWidget *user_header = gtk_label_new("PLAYER");
+    GtkWidget *score_header = gtk_label_new("SCORE");
+    GtkWidget *tests_header = gtk_label_new("TESTS");
     
     gtk_label_set_xalign(GTK_LABEL(rank_header), 0.5);
     gtk_label_set_xalign(GTK_LABEL(user_header), 0.0);
@@ -522,26 +509,16 @@ void create_leaderboard_screen() {
                 gtk_widget_set_name(row_box, "leaderboard-row");
                 
                 // Thêm class cho top 3
-                int rank_num = atoi(entry.rank + 1); // Bỏ ký tự '#'
-                if (rank_num == 1) {
+                if (entry.rank_num == 1) {
                     gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-1");
-                } else if (rank_num == 2) {
+                } else if (entry.rank_num == 2) {
                     gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-2");
-                } else if (rank_num == 3) {
+                } else if (entry.rank_num == 3) {
                     gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-3");
                 }
                 
-                // Rank với icon đặc biệt cho top 3
-                GtkWidget *rank_label;
-                if (rank_num == 1) {
-                    rank_label = gtk_label_new("🥇");
-                } else if (rank_num == 2) {
-                    rank_label = gtk_label_new("🥈");
-                } else if (rank_num == 3) {
-                    rank_label = gtk_label_new("🥉");
-                } else {
-                    rank_label = gtk_label_new(entry.rank);
-                }
+                // Rank - just display number
+                GtkWidget *rank_label = gtk_label_new(entry.rank);
                 gtk_label_set_xalign(GTK_LABEL(rank_label), 0.5);
                 gtk_widget_set_hexpand(rank_label, TRUE);
                 
@@ -598,27 +575,10 @@ void create_leaderboard_screen() {
     gtk_box_pack_start(GTK_BOX(main_container), scroll, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), main_container, TRUE, TRUE, 10);
 
-    // Statistics summary (nếu có dữ liệu)
-    GtkWidget *stats_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
-    gtk_widget_set_margin_top(stats_box, 10);
-    gtk_widget_set_margin_bottom(stats_box, 10);
-    
-    GtkWidget *total_players = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(total_players), 
-        "<span foreground='#27ae60' weight='bold'>👥 Total Players: Loading...</span>");
-    
-    GtkWidget *avg_score = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(avg_score), 
-        "<span foreground='#3498db' weight='bold'>📊 Avg Score: Calculating...</span>");
-    
-    gtk_box_pack_start(GTK_BOX(stats_box), total_players, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(stats_box), avg_score, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), stats_box, FALSE, FALSE, 0);
-
     // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *refresh_btn = gtk_button_new_with_label("REFRESH");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     
     style_button(refresh_btn, "#3498db");
     style_button(back_btn, "#95a5a6");

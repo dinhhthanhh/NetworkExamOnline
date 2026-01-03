@@ -32,7 +32,7 @@ void on_room_button_clicked(GtkWidget *button, gpointer data)
         // Cập nhật label hiển thị phòng đã chọn
         char markup[256];
         snprintf(markup, sizeof(markup), 
-                 "<span foreground='#27ae60' weight='bold'>✅ Selected: %s (ID: %d)</span>", 
+                 "<span foreground='#27ae60' weight='bold'>Selected: %s (ID: %d)</span>", 
                  room_name, selected_room_id);
         gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
     }
@@ -43,7 +43,7 @@ void load_rooms_list()
     // Reset selected room
     selected_room_id = -1;
     gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                        "<span foreground='#e74c3c'>❌ No room selected</span>");
+                        "<span foreground='#e74c3c'>No room selected</span>");
     
     // Xóa hết các row cũ
     GList *children, *iter;
@@ -69,17 +69,23 @@ void load_rooms_list()
         {
             if (strncmp(line, "ROOM|", 5) == 0)
             {
-                // Parse: ROOM|id|name|time|status|question_status|owner
+                // Parse: ROOM|id|name|time|status|question_status|owner|is_practice
                 char room_id[16], room_name[64], owner[32], status[32];
-                int time_limit;
+                int time_limit, is_practice;
                 
-                sscanf(line, "ROOM|%15[^|]|%63[^|]|%d|%31[^|]|%*[^|]|%31s",
-                       room_id, room_name, &time_limit, status, owner);
+                sscanf(line, "ROOM|%15[^|]|%63[^|]|%d|%31[^|]|%*[^|]|%31[^|]|%d",
+                       room_id, room_name, &time_limit, status, owner, &is_practice);
+                
+                // Skip practice rooms - only show exam rooms
+                if (is_practice == 1) {
+                    line = strtok(NULL, "\n");
+                    continue;
+                }
 
                 // Tạo button với thông tin phòng
                 char button_label[256];
                 snprintf(button_label, sizeof(button_label), 
-                        "🏠 %s | ⏱️ %dmin | 👤 %s", 
+                        "🏠 %s | %dmin | %s", 
                         room_name, time_limit, owner);
                 
                 GtkWidget *btn = gtk_button_new_with_label(button_label);
@@ -137,7 +143,7 @@ void load_rooms_list()
     {
         GtkWidget *label = gtk_label_new(NULL);
         gtk_label_set_markup(GTK_LABEL(label), 
-                           "<span foreground='#e74c3c'>⚠️ Cannot load rooms. Check connection.</span>");
+                           "<span foreground='#e74c3c'>Cannot load rooms. Check connection.</span>");
         GtkWidget *row = gtk_list_box_row_new();
         gtk_container_add(GTK_CONTAINER(row), label);
         gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
@@ -153,7 +159,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-                                                   "⚠️ Please select a room first!");
+                                                   "Please select a room first!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         return;
@@ -206,7 +212,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_INFO,
                 GTK_BUTTONS_OK,
-                "✅ Already Completed");
+                "Already Completed");
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
                 "You have already completed this exam.");
             gtk_dialog_run(GTK_DIALOG(error_dialog));
@@ -233,7 +239,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_ERROR,
                 GTK_BUTTONS_OK,
-                "❌ Failed to start exam:\n\n%s",
+                "Failed to start exam:\n\n%s",
                 exam_buffer[0] ? exam_buffer : "No response");
             gtk_dialog_run(GTK_DIALOG(error_dialog));
             gtk_widget_destroy(error_dialog);
@@ -243,7 +249,7 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
     {
         char error_msg[BUFFER_SIZE + 50];
         snprintf(error_msg, sizeof(error_msg), 
-                "❌ Failed to join room!\n\nServer response: %s", 
+                "Failed to join room!\n\nServer response: %s", 
                 buffer[0] ? buffer : "No response");
         
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -308,7 +314,7 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
                 GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                                   "✅ Room created!");
+                                                                   "Room created!");
                 gtk_dialog_run(GTK_DIALOG(success_dialog));
                 gtk_widget_destroy(success_dialog);
 
@@ -330,7 +336,7 @@ void create_test_mode_screen()
     // Title
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-        "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 TEST MODE - Select a Room</span>");
+        "<span foreground='#2c3e50' weight='bold' size='20480'>TEST MODE - Select a Room</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -365,7 +371,7 @@ void create_test_mode_screen()
     // Label phòng đang chọn
     selected_room_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                        "<span foreground='#e74c3c' size='large'>❌ No room selected</span>");
+                        "<span foreground='#e74c3c' size='large'>No room selected</span>");
     gtk_box_pack_start(GTK_BOX(vbox), selected_room_label, FALSE, FALSE, 5);
 
     GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);

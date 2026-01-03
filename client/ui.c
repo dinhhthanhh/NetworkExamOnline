@@ -29,6 +29,27 @@ int test_active = 0;
 int selected_room_id = -1;
 int current_user_id = -1;
 
+// Logout callback - send LOGOUT message to server
+void on_logout_clicked(GtkWidget *widget, gpointer data)
+{
+    printf("[CLIENT] Sending LOGOUT message\n");
+    send_message("LOGOUT\n");
+    
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    if (n > 0) {
+        printf("[CLIENT] Logout response: %s", buffer);
+    }
+    
+    // Clear client data
+    current_user_id = -1;
+    memset(client.username, 0, sizeof(client.username));
+    memset(client.role, 0, sizeof(client.role));
+    
+    // Go to login screen
+    create_login_screen();
+}
+
 void create_main_menu()
 {
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 15);
@@ -62,33 +83,37 @@ void create_main_menu()
 
     if (is_admin) {
         // ========== ADMIN MENU ==========
-        GtkWidget *create_room_btn = gtk_button_new_with_label("➕ Create Room");
-        GtkWidget *add_question_btn = gtk_button_new_with_label("📚 Add Questions");
-        GtkWidget *manage_rooms_btn = gtk_button_new_with_label("🏢 Manage Rooms");
-        GtkWidget *logout_btn = gtk_button_new_with_label("🚪 Logout");
+        GtkWidget *create_room_btn = gtk_button_new_with_label("Create Exam Room");
+        GtkWidget *create_practice_btn = gtk_button_new_with_label("Create Practice Room");
+        GtkWidget *add_question_btn = gtk_button_new_with_label("Add Questions");
+        GtkWidget *manage_rooms_btn = gtk_button_new_with_label("Manage Rooms");
+        GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
 
         style_button(create_room_btn, "#27ae60");
+        style_button(create_practice_btn, "#9b59b6");
         style_button(add_question_btn, "#16a085");
         style_button(manage_rooms_btn, "#3498db");
         style_button(logout_btn, "#95a5a6");
 
         gtk_box_pack_start(GTK_BOX(vbox), create_room_btn, FALSE, FALSE, 5);
+        gtk_box_pack_start(GTK_BOX(vbox), create_practice_btn, FALSE, FALSE, 5);
         gtk_box_pack_start(GTK_BOX(vbox), add_question_btn, FALSE, FALSE, 5);
         gtk_box_pack_start(GTK_BOX(vbox), manage_rooms_btn, FALSE, FALSE, 5);
         gtk_box_pack_start(GTK_BOX(vbox), logout_btn, FALSE, FALSE, 20);
 
         // Admin actions: create room directly without test mode screen
         g_signal_connect(create_room_btn, "clicked", G_CALLBACK(on_admin_create_room_clicked), NULL);
+        g_signal_connect(create_practice_btn, "clicked", G_CALLBACK(on_admin_create_practice_room_clicked), NULL);
         g_signal_connect(add_question_btn, "clicked", G_CALLBACK(create_question_bank_screen), NULL);
         g_signal_connect(manage_rooms_btn, "clicked", G_CALLBACK(create_admin_panel), NULL);
-        g_signal_connect(logout_btn, "clicked", G_CALLBACK(create_login_screen), NULL);
+        g_signal_connect(logout_btn, "clicked", G_CALLBACK(on_logout_clicked), NULL);
     } else {
         // ========== USER MENU ==========
-        GtkWidget *test_mode_btn = gtk_button_new_with_label("📝 Test Mode");
-        GtkWidget *practice_btn = gtk_button_new_with_label("🎯 Practice Mode");
-        GtkWidget *stats_btn = gtk_button_new_with_label("📊 My Statistics");
-        GtkWidget *leaderboard_btn = gtk_button_new_with_label("🏆 Leaderboard");
-        GtkWidget *logout_btn = gtk_button_new_with_label("🚪 Logout");
+        GtkWidget *test_mode_btn = gtk_button_new_with_label("Test Mode");
+        GtkWidget *practice_btn = gtk_button_new_with_label("Practice Mode");
+        GtkWidget *stats_btn = gtk_button_new_with_label("My Statistics");
+        GtkWidget *leaderboard_btn = gtk_button_new_with_label("Leaderboard");
+        GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
 
         style_button(test_mode_btn, "#3498db");
         style_button(practice_btn, "#9b59b6");
@@ -106,7 +131,7 @@ void create_main_menu()
         g_signal_connect(practice_btn, "clicked", G_CALLBACK(create_practice_screen), NULL);
         g_signal_connect(stats_btn, "clicked", G_CALLBACK(create_stats_screen), NULL);
         g_signal_connect(leaderboard_btn, "clicked", G_CALLBACK(create_leaderboard_screen), NULL);
-        g_signal_connect(logout_btn, "clicked", G_CALLBACK(create_login_screen), NULL);
+        g_signal_connect(logout_btn, "clicked", G_CALLBACK(on_logout_clicked), NULL);
     }
 
     show_view(vbox);

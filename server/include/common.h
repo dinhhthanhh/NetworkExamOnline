@@ -47,6 +47,11 @@ typedef struct
   int participant_count;
   UserAnswer answers[MAX_CLIENTS][MAX_QUESTIONS];
   int scores[MAX_CLIENTS];
+  int is_practice;  // 0=exam thật, 1=practice mode
+  int show_answer;  // 1=hiển thị đáp án ngay (chỉ practice)
+  int easy_count;   // Số câu easy cần random
+  int medium_count; // Số câu medium cần random
+  int hard_count;   // Số câu hard cần random
 } TestRoom;
 
 typedef struct

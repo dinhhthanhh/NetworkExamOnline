@@ -20,12 +20,19 @@ typedef struct {
 void create_admin_panel(void);
 void create_question_bank_screen(void);
 void create_csv_import_screen(void);
+void create_room_stats_screen(int room_id);
 
 // Admin operations
 void on_submit_question(GtkWidget *widget, gpointer user_data);
 void on_import_csv_to_room(GtkWidget *widget, gpointer user_data);
 void request_user_rooms(GtkWidget *room_combo);
 void on_admin_create_room_clicked(GtkWidget *widget, gpointer data);
+void on_admin_create_practice_room_clicked(GtkWidget *widget, gpointer data);
+void on_start_room_clicked(GtkWidget *widget, gpointer data);
+void on_close_room_clicked(GtkWidget *widget, gpointer data);
+void on_delete_room_clicked(GtkWidget *widget, gpointer data);
+void on_view_room_stats_clicked(GtkWidget *widget, gpointer data);
+void on_update_room_settings_clicked(GtkWidget *widget, gpointer data);
 
 // Room control callbacks
 void on_start_room_clicked(GtkWidget *widget, gpointer data);

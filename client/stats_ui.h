@@ -14,6 +14,7 @@ typedef struct {
 // Leaderboard entry structure
 typedef struct {
     char rank[10];
+    int rank_num;
     char username[50];
     int score;
     int tests;

@@ -110,4 +110,7 @@ typedef struct
 extern ServerData server_data;
 extern sqlite3 *db;
 
+// Helper to send a text response and log it
+ssize_t server_send(int socket_fd, const char *msg);
+
 #endif

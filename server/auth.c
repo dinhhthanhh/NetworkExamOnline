@@ -40,7 +40,7 @@ void register_user(int socket_fd, char *username, char *password)
   if (!username || !password)
   {
     snprintf(response, sizeof(response), "REGISTER_FAIL|Missing username or password\n");
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     return;
   }
 
@@ -70,12 +70,10 @@ void register_user(int socket_fd, char *username, char *password)
     server_data.users[idx].is_online = 0;
     server_data.users[idx].socket_fd = -1;
     server_data.user_count++;
-
-    printf("User registered: %s (ID: %d)\n", username, server_data.users[idx].user_id);
   }
 
   pthread_mutex_unlock(&server_data.lock);
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 }
 
 void login_user(int socket_fd, char *username, char *password, int *user_id)
@@ -112,21 +110,15 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
         if (server_data.users[i].user_id == *user_id)
         {
           duplicate_count++;
-          printf("[LOGIN_DEBUG] Found user %s (ID: %d) in memory at index %d: is_online=%d, socket_fd=%d\n",
-                 username, *user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
           
           if (server_data.users[i].is_online == 1)
           {
             already_online = 1;
-            printf("[LOGIN_BLOCKED] User %s (ID: %d) is already online from socket %d\n", 
-                   username, *user_id, server_data.users[i].socket_fd);
           }
         }
       }
 
       if (duplicate_count > 1) {
-        printf("[LOGIN_WARNING] User %s (ID: %d) has %d duplicate entries in memory!\n", 
-               username, *user_id, duplicate_count);
       }
 
       if (already_online)
@@ -134,7 +126,7 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
         snprintf(response, sizeof(response), "LOGIN_FAIL|User is already logged in from another device\n");
         sqlite3_finalize(stmt);
         pthread_mutex_unlock(&server_data.lock);
-        send(socket_fd, response, strlen(response), 0);
+        server_send(socket_fd, response);
         return;
       }
 
@@ -154,7 +146,6 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
           server_data.users[i].is_online = 1;
           server_data.users[i].socket_fd = socket_fd;
           user_found = 1;
-          printf("[LOGIN_UPDATE] Updated user %s (ID: %d) at index %d\n", username, *user_id, i);
           // KHÔNG BREAK - tiếp tục update tất cả instances
         }
       }
@@ -185,7 +176,6 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
 
       snprintf(response, sizeof(response), "LOGIN_OK|%d|%s|%s\n", *user_id, token, user_role);
       log_activity(*user_id, "LOGIN", "User logged in");
-      printf("[LOGIN_SUCCESS] User %s (ID: %d) logged in from socket %d\n", username, *user_id, socket_fd);
     }
     else
     {
@@ -195,7 +185,7 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
 
   sqlite3_finalize(stmt);
   pthread_mutex_unlock(&server_data.lock);
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 }
 
 void logout_user(int user_id, int socket_fd)
@@ -212,20 +202,12 @@ void logout_user(int user_id, int socket_fd)
     if (server_data.users[i].user_id == user_id || 
         (user_id == -1 && server_data.users[i].socket_fd == socket_fd))
     {
-      printf("[LOGOUT_DEBUG] Before: User ID=%d at index %d: is_online=%d, socket_fd=%d\n",
-             server_data.users[i].user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
-      
       server_data.users[i].is_online = 0;
       server_data.users[i].socket_fd = -1;
       memset(server_data.users[i].session_token, 0, sizeof(server_data.users[i].session_token));
       
       logged_out_user_id = server_data.users[i].user_id;
       user_found = 1;
-      
-      printf("[LOGOUT] User ID: %d (socket %d) logged out at index %d\n", 
-             server_data.users[i].user_id, socket_fd, i);
-      printf("[LOGOUT_DEBUG] After: User ID=%d at index %d: is_online=%d, socket_fd=%d\n",
-             server_data.users[i].user_id, i, server_data.users[i].is_online, server_data.users[i].socket_fd);
       
       // KHÔNG BREAK - tiếp tục logout tất cả instances
     }
@@ -248,7 +230,6 @@ void logout_user(int user_id, int socket_fd)
   }
 
   if (!user_found) {
-    printf("[LOGOUT_WARNING] User not found for logout: user_id=%d, socket_fd=%d\n", user_id, socket_fd);
   }
 
   pthread_mutex_unlock(&server_data.lock);
@@ -262,16 +243,14 @@ void change_password(int socket_fd, int user_id, char *old_password, char *new_p
   
   if (!old_password || !new_password || user_id <= 0) {
     snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Invalid parameters\n");
-    send(socket_fd, response, strlen(response), 0);
-    printf("[CHANGE_PASSWORD] Failed: Invalid parameters for user %d\n", user_id);
+    server_send(socket_fd, response);
     return;
   }
   
   // Validate new password length
   if (strlen(new_password) < 3) {
     snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|New password too short (min 3 characters)\n");
-    send(socket_fd, response, strlen(response), 0);
-    printf("[CHANGE_PASSWORD] Failed: New password too short for user %d\n", user_id);
+    server_send(socket_fd, response);
     return;
   }
   
@@ -298,24 +277,20 @@ void change_password(int socket_fd, int user_id, char *old_password, char *new_p
       
       if (sqlite3_exec(db, update_query, 0, 0, &err_msg) == SQLITE_OK) {
         snprintf(response, sizeof(response), "CHANGE_PASSWORD_OK|Password changed successfully\n");
-        printf("[CHANGE_PASSWORD] Success: User %d changed password\n", user_id);
         log_activity(user_id, "CHANGE_PASSWORD", "Password changed successfully");
       } else {
         snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Database error\n");
-        printf("[CHANGE_PASSWORD] Failed: DB error for user %d: %s\n", user_id, err_msg);
         sqlite3_free(err_msg);
       }
     } else {
       // Old password incorrect
       sqlite3_finalize(stmt);
       snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Old password incorrect\n");
-      printf("[CHANGE_PASSWORD] Failed: Incorrect old password for user %d\n", user_id);
     }
   } else {
     snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Database query error\n");
-    printf("[CHANGE_PASSWORD] Failed: DB query error for user %d\n", user_id);
   }
   
   pthread_mutex_unlock(&server_data.lock);
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 }

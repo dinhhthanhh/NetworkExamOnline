@@ -17,8 +17,6 @@ void start_room_timer(int room_id, int time_limit)
     room_timers[room_id].room_id = room_id;
     room_timers[room_id].time_remaining = time_limit;
     room_timers[room_id].start_time = time(NULL);
-
-    printf("Timer started for room %d: %d seconds\n", room_id, time_limit);
   }
 
   pthread_mutex_unlock(&server_data.lock);
@@ -37,8 +35,7 @@ void broadcast_time_update(int room_id, int time_remaining)
   for (int i = 0; i < room->participant_count; i++)
   {
     // In a real app, we'd need to track client sockets for each participant
-    // For now, just log the broadcast
-    printf("Broadcast time update: Room %d has %d seconds remaining\n", room_id, time_remaining);
+    // Currently, this function only updates server-side timer state.
   }
 
   pthread_mutex_unlock(&server_data.lock);
@@ -67,7 +64,6 @@ void check_room_timeouts(void)
       {
         // Time's up - auto-submit CHỈ users đang ONLINE
         room->room_status = 2; // ENDED
-        printf("Room %d time's up - test finished\n", i);
 
         // Query danh sách participants từ DB để lấy users đã bắt đầu thi
         char participant_query[512];
@@ -153,12 +149,7 @@ void check_room_timeouts(void)
                 if (err_msg) {
                   sqlite3_free(err_msg);
                 }
-
-                printf("[TIMER] Auto-submitted user %d (online) - Score: %d/%d\n", 
-                       user_id, score, total_questions);
               }
-            } else {
-              printf("[TIMER] User %d is offline - NOT auto-submitting (can resume later)\n", user_id);
             }
           }
           sqlite3_finalize(stmt);
@@ -188,7 +179,6 @@ void cleanup_expired_rooms(void)
       if (age > ROOM_EXPIRE_TIME)
       {
         // Mark as expired (can be archived)
-        printf("Room %d expired and can be archived\n", i);
       }
     }
   }

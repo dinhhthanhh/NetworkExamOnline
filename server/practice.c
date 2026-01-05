@@ -102,8 +102,6 @@ void init_practice_tables() {
         fprintf(stderr, "Failed to create practice_logs table: %s\n", err_msg);
         sqlite3_free(err_msg);
     }
-    
-    printf("Practice tables initialized successfully\n");
 }
 
 // Load practice rooms from database
@@ -152,8 +150,7 @@ void load_practice_rooms_from_db() {
     }
     
     sqlite3_finalize(stmt);
-    printf("Loaded %d practice rooms from database\n", server_data.practice_room_count);
-    
+
     pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -1098,7 +1095,6 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
         snprintf(response, sizeof(response), "DELETE_PRACTICE_FAIL|Practice room not found\n");
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
-        printf("[DELETE_PRACTICE] Failed: Room %d not found\n", practice_id);
         return;
     }
     
@@ -1106,7 +1102,6 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
         snprintf(response, sizeof(response), "DELETE_PRACTICE_FAIL|Permission denied\n");
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
-        printf("[DELETE_PRACTICE] Failed: User %d is not creator of room %d\n", user_id, practice_id);
         return;
     }
     
@@ -1167,8 +1162,6 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
     
     snprintf(response, sizeof(response), "DELETE_PRACTICE_OK|Practice room deleted successfully\n");
     send(socket_fd, response, strlen(response), 0);
-    
-    printf("[DELETE_PRACTICE] Success: Room %d deleted by user %d\n", practice_id, user_id);
     log_activity(user_id, "DELETE_PRACTICE", "Deleted practice room");
     
     pthread_mutex_unlock(&server_data.lock);

@@ -69,6 +69,23 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
     
     // Use complete message receiver to handle TCP fragmentation
     ssize_t n = receive_complete_message(buffer, BUFFER_SIZE * 16, 50);
+
+    // Optional: pretty-print questions line-by-line in console for debugging
+    if (n > 0 && strncmp(buffer, "ROOM_QUESTIONS_LIST", 19) == 0) {
+        printf("===== ROOM_QUESTIONS_LIST (parsed) =====\n");
+        // Work on a copy so we don't break later parsing
+        char *debug_copy = strdup(buffer);
+        if (debug_copy) {
+            char *saveptr;
+            char *tok = strtok_r(debug_copy, "|", &saveptr); // HEADER
+            tok = strtok_r(NULL, "|", &saveptr);             // room_id
+            int idx = 1;
+            while ((tok = strtok_r(NULL, "|", &saveptr)) != NULL) {
+                printf("Q%d: %s\n", idx++, tok);
+            }
+            free(debug_copy);
+        }
+    }
     if (n <= 0) {
         show_error_dialog("Failed to receive question list");
         free(buffer);

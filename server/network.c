@@ -1,4 +1,5 @@
 #include "network.h"
+#include <string.h>
 #include "auth.h"
 #include "rooms.h"
 #include "questions.h"
@@ -12,6 +13,13 @@
 
 extern ServerData server_data;
 extern sqlite3 *db;
+
+// Central helper to log all server sends
+ssize_t server_send(int socket_fd, const char *msg) {
+  if (!msg) return -1;
+  printf("[SERVER SEND fd=%d] %s\n", socket_fd, msg);
+  return send(socket_fd, msg, strlen(msg), 0);
+}
 
 void *handle_client(void *arg)
 {
@@ -28,9 +36,6 @@ void *handle_client(void *arg)
     if (n <= 0) {
       // Detect disconnect - GHI TẤT CẢ ANSWERS VÀO DB ĐỂ USER CÓ THỂ RESUME
       if (user_id > 0 && current_room_id > 0) {
-        printf("[DISCONNECT] User %d disconnected from room %d - flushing answers to DB\n", 
-               user_id, current_room_id);
-        
         // **QUAN TRỌNG: Flush tất cả answers từ in-memory vào DB**
         flush_user_answers(user_id, current_room_id);
         
@@ -49,13 +54,14 @@ void *handle_client(void *arg)
 
     buffer[n] = '\0';
 
+    // Log raw command received from client
+    printf("[SERVER RECV fd=%d] %s\n", socket_fd, buffer);
+
     size_t len = strlen(buffer);
     if (len > 0 && buffer[len - 1] == '\n')
     {
       buffer[len - 1] = '\0';
     }
-
-    printf("Received: %s\n", buffer);
 
     char *cmd = strtok(buffer, "|");
     if (cmd == NULL)
@@ -133,12 +139,11 @@ void *handle_client(void *arg)
       current_room_id = room_id; // Track room
       handle_resume_exam(socket_fd, user_id, room_id);
     }
-    // CLOSE_ROOM removed - rooms are closed automatically after exam ends
-    // else if (strcmp(cmd, "CLOSE_ROOM") == 0)
-    // {
-    //   int room_id = atoi(strtok(NULL, "|"));
-    //   close_room(socket_fd, user_id, room_id);
-    // }
+    else if (strcmp(cmd, "CLOSE_ROOM") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      close_room(socket_fd, user_id, room_id);
+    }
     else if (strcmp(cmd, "DELETE_ROOM") == 0)
     {
       int room_id = atoi(strtok(NULL, "|"));
@@ -424,8 +429,6 @@ void broadcast_to_room_participants(int room_id, const char *message) {
       if (server_data.users[j].user_id == user_id && 
           server_data.users[j].is_online == 1) {
         send(server_data.users[j].socket_fd, message, strlen(message), 0);
-        printf("[BROADCAST] Sent to user %d (room %d): %s", 
-               user_id, room_id, message);
         break;
       }
     }
@@ -468,15 +471,11 @@ void broadcast_to_room_participants_except(int room_id, const char *message, int
       if (server_data.users[j].user_id == user_id && 
           server_data.users[j].is_online == 1) {
         send(server_data.users[j].socket_fd, message, strlen(message), 0);
-        printf("[BROADCAST] Sent to user %d (room %d, excluded %d): %s", 
-               user_id, room_id, exclude_user_id, message);
         sent_count++;
         break;
       }
     }
   }
-  
-  printf("[BROADCAST] Total sent: %d participants (room %d)\n", sent_count, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -494,8 +493,6 @@ void broadcast_room_created(int room_id, const char *room_name, int duration) {
   for (int i = 0; i < server_data.user_count; i++) {
     if (server_data.users[i].is_online == 1) {
       send(server_data.users[i].socket_fd, message, strlen(message), 0);
-      printf("[BROADCAST] Room created notification sent to user %d\n", 
-             server_data.users[i].user_id);
     }
   }
   

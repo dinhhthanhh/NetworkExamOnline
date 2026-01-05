@@ -10,33 +10,6 @@
 
 #include "include/client_common.h"
 
-static int net_debug_enabled = 1;  // 1: bật, 0: tắt
-
-// Hàm bật/tắt debug
-void net_set_debug(int enabled) {
-    net_debug_enabled = enabled;
-}
-
-static void print_debug(const char *direction, const char *message, int strip_newline) {
-    if (!net_debug_enabled) return;
-    
-    // Tạo bản sao để không làm hỏng message gốc
-    char debug_msg[1024];
-    strncpy(debug_msg, message, sizeof(debug_msg) - 1);
-    debug_msg[sizeof(debug_msg) - 1] = '\0';
-    
-    // Loại bỏ newline nếu cần
-    if (strip_newline) {
-        size_t len = strlen(debug_msg);
-        while (len > 0 && (debug_msg[len - 1] == '\n' || debug_msg[len - 1] == '\r')) {
-            debug_msg[len - 1] = '\0';
-            len--;
-        }
-    }
-    
-    printf("%s %s\n", direction, debug_msg);
-}
-
 void net_set_timeout(int sockfd) {
     struct timeval timeout;
     timeout.tv_sec = 5;   
@@ -70,31 +43,20 @@ void flush_socket_buffer(int sockfd) {
     tv.tv_usec = 0;
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     
-    if (flushed > 0 && net_debug_enabled) {
-        printf("[FLUSH] Cleared %d stale buffers\n", flushed);
-    }
 }
 
 void send_message(const char *msg) {
     // Check connection first
     if (client.socket_fd <= 0 || !check_connection()) {
-        if (net_debug_enabled) {
-            printf("Cannot send: not connected to server\n");
-        }
         show_connection_lost_dialog();
         return;
     }
     
-    // Debug: in message gửi đi
-    if (net_debug_enabled) {
-        print_debug("Send:", msg, 1);
-    }
-    
+    // Log outgoing socket command with separator
+    printf("\n===== CLIENT SEND =====\n%s\n", msg);
+
     ssize_t s = send(client.socket_fd, msg, strlen(msg), 0);
     if (s < 0) {
-        if (net_debug_enabled) {
-            perror("Send failed");
-        }
         // Connection might be lost
         if (errno == EPIPE || errno == ECONNRESET) {
             close(client.socket_fd);
@@ -105,9 +67,6 @@ void send_message(const char *msg) {
 
 ssize_t receive_message(char *buffer, size_t bufsz) {
     if (client.socket_fd <= 0) {
-        if (net_debug_enabled) {
-            printf("Cannot receive: socket not connected\n");
-        }
         show_connection_lost_dialog();
         return -1;
     }
@@ -117,16 +76,10 @@ ssize_t receive_message(char *buffer, size_t bufsz) {
     
     if (n > 0) {
         buffer[n] = '\0';
-        
-        // Debug: in message nhận được
-        if (net_debug_enabled) {
-            print_debug("Receive:", buffer, 1);
-        }
+        // Log incoming socket message with separator
+        printf("===== CLIENT RECV =====\n%s\n", buffer);
     } else if (n == 0) {
         buffer[0] = '\0';
-        if (net_debug_enabled) {
-            printf("Receive: Connection closed by server\n");
-        }
         // Close socket to prevent further use
         if (client.socket_fd > 0) {
             close(client.socket_fd);
@@ -135,9 +88,6 @@ ssize_t receive_message(char *buffer, size_t bufsz) {
         show_connection_lost_dialog();
     } else {
         // n < 0: lỗi
-        if (net_debug_enabled) {
-            perror("Cannot receive: Receive failed");
-        }
         // Check if connection was lost
         if (errno == ECONNRESET || errno == EPIPE) {
             if (client.socket_fd > 0) {
@@ -154,9 +104,6 @@ ssize_t receive_message(char *buffer, size_t bufsz) {
 // Receive complete message for large responses (handles TCP fragmentation)
 ssize_t receive_complete_message(char *buffer, size_t bufsz, int max_attempts) {
     if (client.socket_fd <= 0) {
-        if (net_debug_enabled) {
-            printf("Cannot receive: socket not connected\n");
-        }
         return -1;
     }
     
@@ -185,9 +132,6 @@ ssize_t receive_complete_message(char *buffer, size_t bufsz, int max_attempts) {
             }
         } else if (n == 0) {
             // Connection closed
-            if (net_debug_enabled) {
-                printf("Connection closed while receiving\n");
-            }
             break;
         } else {
             // Error or timeout
@@ -202,9 +146,6 @@ ssize_t receive_complete_message(char *buffer, size_t bufsz, int max_attempts) {
                 }
             } else {
                 // Real error
-                if (net_debug_enabled) {
-                    perror("Error receiving");
-                }
                 break;
             }
         }
@@ -215,11 +156,11 @@ ssize_t receive_complete_message(char *buffer, size_t bufsz, int max_attempts) {
     tv.tv_usec = 0;
     setsockopt(client.socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     
-    if (total_received > 0 && net_debug_enabled) {
-        printf("[RECEIVE_COMPLETE] Got %zu bytes total\n", total_received);
-        print_debug("Receive:", buffer, 1);
+    if (total_received > 0) {
+        // Log full multi-part message with separator
+        printf("===== CLIENT RECV COMPLETE =====\n%s\n", buffer);
     }
-    
+
     return total_received;
 }
 
@@ -266,17 +207,13 @@ int reconnect_to_server(void) {
     server_addr.sin_port   = htons(SERVER_PORT);
 
     if (!inet_aton(SERVER_IP, &server_addr.sin_addr)) {
-        fprintf(stderr, "Invalid server IP address.\n");
         return -1;
     }
 
     if (connect(client.socket_fd, (struct sockaddr *)&server_addr,
                 sizeof(server_addr)) < 0) {
-        perror("connect()");
         return -1;
     }
-
-    printf("[INFO] Reconnected to server\n");
     return 0;
 }
 

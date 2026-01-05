@@ -25,7 +25,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
       const char *role = (const char *)sqlite3_column_text(stmt_role, 0);
       if (role && strcmp(role, "admin") != 0) {
         char response[] = "CREATE_ROOM_FAIL|Permission denied: Only admin can create rooms\n";
-        send(socket_fd, response, strlen(response), 0);
+        server_send(socket_fd, response);
         sqlite3_finalize(stmt_role);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -37,14 +37,14 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   // Kiểm tra đã đạt max rooms
   if (server_data.room_count >= MAX_ROOMS) {
     char response[] = "CREATE_ROOM_FAIL|Max rooms reached\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
   // Kiểm tra room_name hợp lệ
   if (room_name == NULL || strlen(room_name) == 0) {
     char response[] = "CREATE_ROOM_FAIL|Room name cannot be empty\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -52,7 +52,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   // time_limit validation
   if (time_limit <= 0 || time_limit > 180) {
     char response[] = "CREATE_ROOM_FAIL|Invalid time limit (1-180 minutes)\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -61,13 +61,13 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   int total_questions = easy_count + medium_count + hard_count;
   if (total_questions <= 0) {
     char response[] = "CREATE_ROOM_FAIL|Must select at least 1 question\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
   if (total_questions > 50) {
     char response[] = "CREATE_ROOM_FAIL|Too many questions (max 50)\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -78,7 +78,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   int rc = sqlite3_prepare_v2(db, sql_check, -1, &stmt, 0);
   if (rc != SQLITE_OK) {
     char response[] = "CREATE_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -104,7 +104,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   if (rc != SQLITE_OK) {
     fprintf(stderr, "Failed to prepare insert: %s\n", sqlite3_errmsg(db));
     char response[] = "CREATE_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -204,7 +204,6 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
     snprintf(warning, sizeof(warning), 
              "Warning: Only %d out of %d requested questions were available in the question bank", 
              selected_count, total_questions);
-    printf("[CREATE_ROOM] %s\n", warning);
   }
 
   // ===== THÊM VÀO IN-MEMORY =====
@@ -225,8 +224,6 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
       memset(server_data.rooms[idx].answers, -1, sizeof(server_data.rooms[idx].answers));
       
       server_data.room_count++;
-      printf("[CREATE_ROOM] Added room '%s' (ID=%d) to in-memory at idx=%d with %d questions\n", 
-             room_name, room_id, idx, selected_count);
   }
 
   // ===== GỬI RESPONSE =====
@@ -235,7 +232,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   snprintf(response, sizeof(response), 
            "CREATE_ROOM_OK|%d|%s|%d|%d|Easy:%d Medium:%d Hard:%d\n", 
            room_id, room_name, time_limit, selected_count, easy_count, medium_count, hard_count);
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 
   // ===== LOGGING =====
   
@@ -245,9 +242,6 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
            room_name, room_id, time_limit, selected_count, easy_count, medium_count, hard_count);
   log_activity(creator_id, "CREATE_ROOM", log_details);
 
-  printf("[INFO] User %d created room '%s' (ID=%d)\n", 
-         creator_id, room_name, room_id);
-  
   pthread_mutex_unlock(&server_data.lock);
   
   // ===== BROADCAST ROOM CREATED =====
@@ -278,7 +272,7 @@ void list_test_rooms(int socket_fd) {
   
   if (rc != SQLITE_OK) {
     char response[] = "LIST_ROOMS_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -324,7 +318,8 @@ void list_test_rooms(int socket_fd) {
 
   sqlite3_finalize(stmt);
 
-  send(socket_fd, response, offset, 0);
+  response[offset] = '\0';
+  server_send(socket_fd, response);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -338,7 +333,7 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
   
   if (rc != SQLITE_OK) {
     char response[] = "JOIN_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -348,7 +343,7 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
 
   if (rc != SQLITE_ROW) {
     char response[] = "JOIN_ROOM_FAIL|Room not found\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(&server_data.lock);
     return;
@@ -360,7 +355,7 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
   // Kiểm tra room có OPEN không
   if (is_active != 1) {
     char response[] = "JOIN_ROOM_FAIL|Room is closed\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -379,7 +374,7 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
       
       if (has_taken == 1) {
         char response[] = "JOIN_ROOM_FAIL|You have already taken this exam\n";
-        send(socket_fd, response, strlen(response), 0);
+        server_send(socket_fd, response);
         pthread_mutex_unlock(&server_data.lock);
         return;
       }
@@ -408,7 +403,7 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
   rc = sqlite3_prepare_v2(db, sql_insert, -1, &stmt, 0);
   if (rc != SQLITE_OK) {
     char response[] = "JOIN_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -421,19 +416,18 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
 
   if (rc != SQLITE_DONE) {
     char response[] = "JOIN_ROOM_FAIL|Failed to join\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
 
   char response[] = "JOIN_ROOM_OK\n";
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 
   char log_details[128];
   snprintf(log_details, sizeof(log_details), "Joined room ID=%d", room_id);
   log_activity(user_id, "JOIN_ROOM", log_details);
   
-  printf("[INFO] User %d joined room %d\n", user_id, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -449,7 +443,7 @@ void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_atte
   
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-    send(socket_fd, "ERROR|Database error\n", 21, 0);
+    server_send(socket_fd, "ERROR|Database error\n");
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -461,7 +455,7 @@ void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_atte
   sqlite3_finalize(stmt);
   
   if (host_id != user_id) {
-    send(socket_fd, "ERROR|Only room host can set max attempts\n", 43, 0);
+    server_send(socket_fd, "ERROR|Only room host can set max attempts\n");
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -477,7 +471,7 @@ void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_atte
     char response[128];
     snprintf(response, sizeof(response), "ERROR|%s\n", 
              err_msg ? err_msg : "Failed to update");
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     if (err_msg) sqlite3_free(err_msg);
     pthread_mutex_unlock(&server_data.lock);
     return;
@@ -486,10 +480,7 @@ void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_atte
   char response[128];
   snprintf(response, sizeof(response), 
            "SET_MAX_ATTEMPTS_OK|%d|%d\n", room_id, max_attempts);
-  send(socket_fd, response, strlen(response), 0);
-  
-  printf("[INFO] Room %d max_attempts set to %d by user %d\n", 
-         room_id, max_attempts, user_id);
+  server_send(socket_fd, response);
   
   pthread_mutex_unlock(&server_data.lock);
 }
@@ -505,7 +496,7 @@ void close_room(int socket_fd, int user_id, int room_id) {
   
   if (rc != SQLITE_OK) {
     char response[] = "CLOSE_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -515,7 +506,7 @@ void close_room(int socket_fd, int user_id, int room_id) {
 
   if (rc != SQLITE_ROW) {
     char response[] = "CLOSE_ROOM_FAIL|Room not found\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(&server_data.lock);
     return;
@@ -528,7 +519,7 @@ void close_room(int socket_fd, int user_id, int room_id) {
   // Kiểm tra quyền sở hữu
   if (host_id != user_id) {
     char response[] = "CLOSE_ROOM_FAIL|Only creator can close\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -536,7 +527,7 @@ void close_room(int socket_fd, int user_id, int room_id) {
   // Kiểm tra room đã close chưa
   if (is_active == 0) {
     char response[] = "CLOSE_ROOM_FAIL|Room already closed\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -547,7 +538,7 @@ void close_room(int socket_fd, int user_id, int room_id) {
   
   if (rc != SQLITE_OK) {
     char response[] = "CLOSE_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -558,20 +549,18 @@ void close_room(int socket_fd, int user_id, int room_id) {
 
   if (rc != SQLITE_DONE) {
     char response[] = "CLOSE_ROOM_FAIL|Failed to close room\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
 
   char response[128];
   snprintf(response, sizeof(response), "CLOSE_ROOM_OK|Room %d closed\n", room_id);
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 
   char log_details[128];
   snprintf(log_details, sizeof(log_details), "Closed room ID=%d", room_id);
   log_activity(user_id, "CLOSE_ROOM", log_details);
-  
-  printf("[INFO] User %d closed room %d\n", user_id, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -597,7 +586,7 @@ void list_my_rooms(int socket_fd, int user_id) {
   
   if (rc != SQLITE_OK) {
     char response[] = "LIST_MY_ROOMS_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -651,12 +640,17 @@ void list_my_rooms(int socket_fd, int user_id) {
 
   sqlite3_finalize(stmt);
 
-  send(socket_fd, response, offset, 0);
+  response[offset] = '\0';
+  server_send(socket_fd, response);
   pthread_mutex_unlock(&server_data.lock);
 }
 
 // Delete a room (admin only)
 void delete_room(int socket_fd, int user_id, int room_id) {
+  // Danh sách socket của các participant để broadcast sau khi nhả lock
+  int participant_sockets[MAX_CLIENTS];
+  int participant_count = 0;
+
   pthread_mutex_lock(&server_data.lock);
   
   // Check if user is admin and room owner
@@ -666,7 +660,7 @@ void delete_room(int socket_fd, int user_id, int room_id) {
   
   if (rc != SQLITE_OK) {
     char response[] = "DELETE_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -676,7 +670,7 @@ void delete_room(int socket_fd, int user_id, int room_id) {
   
   if (rc != SQLITE_ROW) {
     char response[] = "DELETE_ROOM_FAIL|Room not found\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(&server_data.lock);
     return;
@@ -687,20 +681,49 @@ void delete_room(int socket_fd, int user_id, int room_id) {
   
   if (host_id != user_id) {
     char response[] = "DELETE_ROOM_FAIL|You are not the owner of this room\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
-  
-  // ===== BROADCAST TO ALL PARTICIPANTS FIRST =====
+
+  // Tìm room trong in-memory và gom socket của tất cả participants
+  int room_idx = -1;
+  for (int i = 0; i < server_data.room_count; i++) {
+    if (server_data.rooms[i].room_id == room_id) {
+      room_idx = i;
+      break;
+    }
+  }
+
+  if (room_idx != -1) {
+    TestRoom *room = &server_data.rooms[room_idx];
+    for (int i = 0; i < room->participant_count && participant_count < MAX_CLIENTS; i++) {
+      int pid = room->participants[i];
+      // Tìm socket tương ứng trong danh sách user online
+      for (int j = 0; j < server_data.user_count && participant_count < MAX_CLIENTS; j++) {
+        if (server_data.users[j].user_id == pid && server_data.users[j].is_online == 1) {
+          participant_sockets[participant_count++] = server_data.users[j].socket_fd;
+          break;
+        }
+      }
+    }
+
+    // Xoá room khỏi in-memory
+    for (int j = room_idx; j < server_data.room_count - 1; j++) {
+      server_data.rooms[j] = server_data.rooms[j + 1];
+    }
+    server_data.room_count--;
+  }
+
+  pthread_mutex_unlock(&server_data.lock);
+
+  // ===== BROADCAST RA NGOÀI LOCK =====
   char broadcast_msg[256];
   snprintf(broadcast_msg, sizeof(broadcast_msg), "ROOM_DELETED|%d\n", room_id);
-  broadcast_to_room_participants(room_id, broadcast_msg);  // GỬI CHO TẤT CẢ
-  printf("[INFO] Broadcasting ROOM_DELETED for room %d to all participants\n", room_id);
-  
-  // Small delay để broadcast được xử lý
-  usleep(100000); // 100ms
-  
+  for (int i = 0; i < participant_count; i++) {
+    server_send(participant_sockets[i], broadcast_msg);
+  }
+
   // ===== DELETE FROM DATABASE (HARD DELETE) =====
   // Delete associated data: exam_answers, participants, questions
   const char *sqls[] = {
@@ -711,44 +734,18 @@ void delete_room(int socket_fd, int user_id, int room_id) {
     "DELETE FROM rooms WHERE id = ?;"  // Hard delete the room
   };
   
-  const char *sql_names[] = {
-    "exam_answers", "participants", "exam_questions", "results", "rooms"
-  };
-  
   for (int i = 0; i < 5; i++) {
     rc = sqlite3_prepare_v2(db, sqls[i], -1, &stmt, 0);
     if (rc == SQLITE_OK) {
       sqlite3_bind_int(stmt, 1, room_id);
       rc = sqlite3_step(stmt);
-      if (rc == SQLITE_DONE) {
-        int deleted = sqlite3_changes(db);
-        printf("[DELETE_ROOM] Deleted %d rows from %s for room %d\n", deleted, sql_names[i], room_id);
-      } else {
-        printf("[DELETE_ROOM] ERROR deleting from %s: %s\n", sql_names[i], sqlite3_errmsg(db));
-      }
       sqlite3_finalize(stmt);
-    } else {
-      printf("[DELETE_ROOM] ERROR preparing DELETE for %s: %s\n", sql_names[i], sqlite3_errmsg(db));
     }
   }
   
-  // Remove from in-memory
-  for (int i = 0; i < server_data.room_count; i++) {
-    if (server_data.rooms[i].room_id == room_id) {
-      // Shift remaining rooms
-      for (int j = i; j < server_data.room_count - 1; j++) {
-        server_data.rooms[j] = server_data.rooms[j + 1];
-      }
-      server_data.room_count--;
-      break;
-    }
-  }
-  
-  // ===== SEND RESPONSE TO ADMIN LAST =====
+  // ===== SEND RESPONSE TO ADMIN CUỐI CÙNG =====
   char response[] = "DELETE_ROOM_OK\n";
-  send(socket_fd, response, strlen(response), 0);
-  printf("[INFO] Room %d fully deleted from memory and database\n", room_id);
-  pthread_mutex_unlock(&server_data.lock);
+  server_send(socket_fd, response);
 }
 
 void start_test(int socket_fd, int user_id, int room_id) {
@@ -761,7 +758,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   
   if (rc != SQLITE_OK) {
     char response[] = "START_ROOM_FAIL|Database error\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -771,7 +768,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
 
   if (rc != SQLITE_ROW) {
     char response[] = "START_ROOM_FAIL|Room not found\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(&server_data.lock);
     return;
@@ -784,7 +781,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   // Kiểm tra quyền sở hữu
   if (host_id != user_id) {
     char response[] = "START_ROOM_FAIL|Only creator can start\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -800,7 +797,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   
   if (room_idx == -1) {
     char response[] = "START_ROOM_FAIL|Room not loaded in memory\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -808,7 +805,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   // Kiểm tra room đã bắt đầu chưa
   if (server_data.rooms[room_idx].room_status == 1) {  // STARTED
     char response[] = "START_ROOM_FAIL|Room already started\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -829,7 +826,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   
   if (question_count == 0) {
     char response[] = "START_ROOM_FAIL|Room has no questions. Please add questions first.\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
     pthread_mutex_unlock(&server_data.lock);
     return;
   }
@@ -851,14 +848,12 @@ void start_test(int socket_fd, int user_id, int room_id) {
 
   char response[128];
   snprintf(response, sizeof(response), "START_ROOM_OK|Room %d started\n", room_id);
-  send(socket_fd, response, strlen(response), 0);
+  server_send(socket_fd, response);
 
   char log_details[128];
   snprintf(log_details, sizeof(log_details), "Started exam in room ID=%d", room_id);
   log_activity(user_id, "START_ROOM", log_details);
-  
-  printf("[INFO] User %d started exam in room %d\n", user_id, room_id);
-  
+
   pthread_mutex_unlock(&server_data.lock);
   
   // ===== BROADCAST ROOM STARTED =====
@@ -917,14 +912,13 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
                     sqlite3_finalize(count_stmt);
                 }
                 
-                server_data.rooms[room_idx].participant_count = 0;
-                memset(server_data.rooms[room_idx].participants, 0, 
-                       sizeof(server_data.rooms[room_idx].participants));
-                memset(server_data.rooms[room_idx].answers, -1, 
-                       sizeof(server_data.rooms[room_idx].answers));
+                  server_data.rooms[room_idx].participant_count = 0;
+                  memset(server_data.rooms[room_idx].participants, 0, 
+                    sizeof(server_data.rooms[room_idx].participants));
+                  memset(server_data.rooms[room_idx].answers, -1, 
+                    sizeof(server_data.rooms[room_idx].answers));
                 
-                server_data.room_count++;
-                printf("[BEGIN_EXAM] Loaded room %d into in-memory (idx=%d)\n", room_id, room_idx);
+                  server_data.room_count++;
             }
             sqlite3_finalize(room_stmt);
         }
@@ -961,9 +955,8 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         }
         
         if (!already_participant && room->participant_count < MAX_CLIENTS) {
-            room->participants[room->participant_count] = user_id;
-            room->participant_count++;
-            printf("[BEGIN_EXAM] User %d joined waiting room %d\n", user_id, room_id);
+          room->participants[room->participant_count] = user_id;
+          room->participant_count++;
         }
         
         pthread_mutex_unlock(&server_data.lock);
@@ -1006,16 +999,14 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
     }
     
     if (!already_participant && room->participant_count < MAX_CLIENTS) {
-        room->participants[room->participant_count] = user_id;
-        room->participant_count++;
+      room->participants[room->participant_count] = user_id;
+      room->participant_count++;
         
-        // Init answers cho user này thành -1
-        int user_idx = room->participant_count - 1;
-        for (int q = 0; q < MAX_QUESTIONS; q++) {
-            room->answers[user_idx][q].answer = -1;
-        }
-        printf("[BEGIN_EXAM] User %d joined started exam in room %d (late join, %ld sec remaining)\n", 
-               user_id, room_id, remaining);
+      // Init answers cho user này thành -1
+      int user_idx = room->participant_count - 1;
+      for (int q = 0; q < MAX_QUESTIONS; q++) {
+        room->answers[user_idx][q].answer = -1;
+      }
     }
     
     // Lưu start_time cho user này trong DB
@@ -1069,9 +1060,6 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
-    
-    printf("[INFO] User %d began exam in room %d (%d questions, %ld sec remaining)\n", 
-           user_id, room_id, question_count, remaining);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -1229,9 +1217,6 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[INFO] User %d resumed exam in room %d (%ld seconds remaining)\n", 
-           user_id, room_id, remaining);
-    
     pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -1282,11 +1267,7 @@ void load_rooms_from_db(void) {
             
             server_data.room_count++;
         }
-        
-        printf("[DB_LOAD] Loaded %d rooms into memory\n", server_data.room_count);
-    } else {
-        fprintf(stderr, "[DB_LOAD] Failed to load rooms from database\n");
-    }
+      }
     
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(&server_data.lock);
@@ -1358,11 +1339,9 @@ static void load_room_answers_internal(int room_id, int user_id) {
                 room->answers[user_idx][question_idx].submit_time = answered_at;
             }
         }
-        
-        printf("[DB_LOAD] Loaded answers for user %d in room %d\n", user_id, room_id);
-    }
+      }
     
-    sqlite3_finalize(stmt);
+      sqlite3_finalize(stmt);
 }
 
 // Load đáp án của user từ DB vào in-memory (PUBLIC - có lock)
@@ -1575,9 +1554,6 @@ void get_room_questions(int socket_fd, int user_id, int room_id) {
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
-    
-    printf("[GET_ROOM_QUESTIONS] Success: Sent %d questions from room %d to user %d\n",
-           question_count, room_id, user_id);
     
     pthread_mutex_unlock(&server_data.lock);
 }

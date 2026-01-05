@@ -19,7 +19,7 @@ void get_question_detail(int socket_fd, int user_id, int room_id, int question_i
 void update_exam_question(int socket_fd, int user_id, int room_id, int question_id, char *new_data);
 void update_room_question(int socket_fd, int user_id, int room_id, int question_id, char *new_data);
 void get_room_members(int socket_fd, int user_id, int room_id);
-// void close_room(int socket_fd, int user_id, int room_id); // REMOVED - auto close
+void close_room(int socket_fd, int user_id, int room_id);
 void load_rooms_from_db(void);
 void load_room_answers(int room_id, int user_id);
 

@@ -436,7 +436,6 @@ void on_delete_room_clicked(GtkWidget *widget, gpointer data) {
     // Stop broadcast listener first so it stops touching socket flags
     if (broadcast_is_listening()) {
         broadcast_stop_listener();
-        printf("[ADMIN_UI] Stopped broadcast listener before DELETE_ROOM\n");
         usleep(50000); // 50ms - wait for any pending timer callbacks to finish
     }
     
@@ -445,7 +444,6 @@ void on_delete_room_clicked(GtkWidget *widget, gpointer data) {
         int flags = fcntl(client.socket_fd, F_GETFL, 0);
         if (flags >= 0) {
             fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-            printf("[ADMIN_UI] Socket set to blocking mode before DELETE\n");
         }
     }
     
@@ -529,7 +527,6 @@ void create_admin_panel()
     // Stop broadcast listener so we can safely use blocking I/O for this request
     if (broadcast_is_listening()) {
         broadcast_stop_listener();
-        printf("[ADMIN_UI] Stopped broadcast listener before loading panel\n");
         usleep(50000); // Small delay to ensure timer callback is finished
     }
     
@@ -538,7 +535,6 @@ void create_admin_panel()
         int flags = fcntl(client.socket_fd, F_GETFL, 0);
         if (flags >= 0) {
             fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-            printf("[ADMIN_UI] Socket set to blocking mode\n");
         }
     }
     

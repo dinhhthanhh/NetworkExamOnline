@@ -313,7 +313,6 @@ int import_questions_from_csv(const char *filename, int room_id)
     
     pthread_mutex_unlock(&server_data.lock);
     fclose(fp);
-    printf("[INFO] Imported %d questions from %s to room_id=%d\n", imported, filename, room_id);
     return imported;
 }
 
@@ -356,9 +355,6 @@ void handle_import_csv(int client_socket, char *data)
         return;
     }
     
-    printf("[INFO] Receiving CSV upload: %s (%ld bytes) for room_id=%d\n", 
-           filename, file_size, room_id);
-    
     // Send ACK to client to confirm ready to receive
     char ack[] = "READY\n";
     send(client_socket, ack, strlen(ack), 0);
@@ -378,12 +374,9 @@ void handle_import_csv(int client_socket, char *data)
         ssize_t n = recv(client_socket, file_buffer + total_received, 
                          file_size - total_received, 0);
         if (n > 0) {
-            total_received += n;
-            printf("[DEBUG] Received %ld bytes (total: %ld/%ld)\n", 
-                   n, total_received, file_size);
+                 total_received += n;
             retry_count = 0; // Reset retry on success
         } else if (n == 0) {
-            printf("[ERROR] Connection closed by client\n");
             free(file_buffer);
             send(client_socket, "ERROR|Connection closed\n", 25, 0);
             return;
@@ -393,7 +386,6 @@ void handle_import_csv(int client_socket, char *data)
                 // Timeout - retry
                 retry_count++;
                 if (retry_count > MAX_RETRIES) {
-                    printf("[ERROR] Timeout after %d retries\n", MAX_RETRIES);
                     free(file_buffer);
                     send(client_socket, "ERROR|Upload timeout\n", 22, 0);
                     return;
@@ -401,7 +393,6 @@ void handle_import_csv(int client_socket, char *data)
                 usleep(100000); // Sleep 100ms before retry
                 continue;
             } else {
-                printf("[ERROR] recv() failed: %s\n", strerror(errno));
                 free(file_buffer);
                 send(client_socket, "ERROR|File upload failed\n", 26, 0);
                 return;
@@ -409,8 +400,6 @@ void handle_import_csv(int client_socket, char *data)
         }
     }
     file_buffer[file_size] = '\0';
-    
-    printf("[INFO] Received %ld bytes successfully\n", total_received);
     
     // Create temp file with unique name
     char temp_path[256];
@@ -428,14 +417,11 @@ void handle_import_csv(int client_socket, char *data)
     fclose(fp);
     free(file_buffer);
     
-    printf("[INFO] Saved to temp file: %s\n", temp_path);
-    
     // Import from temp file
     int imported = import_questions_from_csv(temp_path, room_id);
     
     // Delete temp file
     unlink(temp_path);
-    printf("[INFO] Cleaned up temp file\n");
     
     if (imported < 0) {
         send(client_socket, "ERROR|Import failed\n", 21, 0);
@@ -443,6 +429,5 @@ void handle_import_csv(int client_socket, char *data)
         char response[128];
         snprintf(response, sizeof(response), "IMPORT_OK|%d\n", imported);
         send(client_socket, response, strlen(response), 0);
-        printf("[INFO] Import completed: %d questions\n", imported);
     }
 }

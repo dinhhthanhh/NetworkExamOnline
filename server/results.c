@@ -27,9 +27,6 @@ static int find_participant_index(TestRoom *room, int user_id) {
 
 // Helper: Ghi toàn bộ đáp án của 1 user vào DB (batch write)
 static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int user_idx) {
-    printf("[FLUSH] Starting flush for user %d in room %d (user_idx=%d)\n", 
-           user_id, room_id, user_idx);
-    
     // Xóa các đáp án cũ trong DB
     char delete_query[256];
     snprintf(delete_query, sizeof(delete_query),
@@ -67,7 +64,6 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
     }
     
     sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
-    printf("[FLUSH] Saved answers for user %d in room %d to DB\n", user_id, room_id);
 }
 
 // Lưu đáp án vào IN-MEMORY (thay vì ghi trực tiếp DB)
@@ -77,7 +73,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     
     // Validate selected_answer (0-3 = A-D)
     if (selected_answer < 0 || selected_answer > 3) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Invalid answer\n", 33, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Invalid answer\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -85,7 +81,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm room trong in-memory structure
     int room_idx = find_room_index(room_id);
     if (room_idx == -1) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Room not found\n", 34, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Room not found\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -95,7 +91,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm user trong participants
     int user_idx = find_participant_index(room, user_id);
     if (user_idx == -1) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Not a participant\n", 37, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Not a participant\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -116,7 +112,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     }
     
     if (question_idx < 0 || question_idx >= MAX_QUESTIONS) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Invalid question\n", 36, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Invalid question\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -126,10 +122,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     room->answers[user_idx][question_idx].answer = selected_answer;
     room->answers[user_idx][question_idx].submit_time = time(NULL);
     
-    send(socket_fd, "SAVE_ANSWER_OK\n", 16, 0);
-    
-    printf("[MEMORY] User %d answered Q%d = %d in room %d (in-memory)\n", 
-           user_id, question_idx, selected_answer, room_id);
+    server_send(socket_fd, "SAVE_ANSWER_OK\n");
     
     // **AUTO-SAVE mỗi 5 câu hoặc câu cuối**
     int answered_count = 0;
@@ -169,7 +162,7 @@ void submit_answer(int socket_fd, int user_id, int room_id, int question_num, in
     room->answers[user_idx][question_num].submit_time = time(NULL);
 
     char response[] = "SUBMIT_ANSWER_OK\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
   }
 
   pthread_mutex_unlock(&server_data.lock);
@@ -197,7 +190,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
   
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-      send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n", 33, 0);
+    server_send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n");
       pthread_mutex_unlock(&server_data.lock);
       return;
   }
@@ -209,7 +202,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
   sqlite3_finalize(stmt);
   
   if (start_time == 0) {
-      send(socket_fd, "SUBMIT_TEST_FAIL|Not started yet\n", 34, 0);
+    server_send(socket_fd, "SUBMIT_TEST_FAIL|Not started yet\n");
       pthread_mutex_unlock(&server_data.lock);
       return;
   }
@@ -295,15 +288,12 @@ void submit_test(int socket_fd, int user_id, int room_id)
            user_id, room_id);
   sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
 
-  printf("[SUBMIT] Marked user %d as taken exam in room %d (participants + room_participants)\n", user_id, room_id);
-
   char response[200];
   snprintf(response, sizeof(response), "SUBMIT_TEST_OK|%d|%d|%ld\n", 
            score, total_questions, elapsed/60);
-  send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
 
   log_activity(user_id, "SUBMIT_TEST", "Test submitted");
-  printf("[INFO] User %d submitted test - Score: %d/%d\n", user_id, score, total_questions);
   
   pthread_mutex_unlock(&server_data.lock);
 }
@@ -325,7 +315,7 @@ void view_results(int socket_fd, int room_id)
   }
 
   strcat(response, "\n");
-  send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -335,7 +325,6 @@ void view_results(int socket_fd, int room_id)
 // - handle_resume_exam: đã lock rooms/ServerData trước khi gọi.
 void auto_submit_on_disconnect(int user_id, int room_id)
 {
-    printf("[INFO] Auto-submit for user %d in room %d (disconnect/timeout)\n", user_id, room_id);
   
   // Kiểm tra user đã bắt đầu thi chưa
   char check_query[256];
@@ -436,36 +425,18 @@ void auto_submit_on_disconnect(int user_id, int room_id)
     sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
   
     log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
-    printf("[INFO] Auto-submitted for user %d - Score: %d/%d (marked as taken)\n", user_id, score, total_questions);
 }
 
 // Public wrapper để flush answers (dùng cho external calls)
 void flush_user_answers(int user_id, int room_id) {
     pthread_mutex_lock(&server_data.lock);
-    
-    printf("[FLUSH] flush_user_answers called: user=%d, room=%d, room_count=%d\n", 
-           user_id, room_id, server_data.room_count);
-    
     int room_idx = find_room_index(room_id);
     if (room_idx != -1) {
         TestRoom *room = &server_data.rooms[room_idx];
-        printf("[FLUSH] Found room at idx=%d, participant_count=%d\n", 
-               room_idx, room->participant_count);
         
         int user_idx = find_participant_index(room, user_id);
         if (user_idx != -1) {
-            printf("[FLUSH] Found user at idx=%d, calling flush_answers_to_db\n", user_idx);
             flush_answers_to_db(user_id, room_id, room, user_idx);
-        } else {
-            printf("[FLUSH] ERROR: User %d not found in room participants\n", user_id);
-        }
-    } else {
-        printf("[FLUSH] ERROR: Room %d not found in in-memory (room_count=%d)\n", 
-               room_id, server_data.room_count);
-        // List all rooms for debugging
-        for (int i = 0; i < server_data.room_count; i++) {
-            printf("[FLUSH]   Room[%d]: id=%d, participants=%d\n", 
-                   i, server_data.rooms[i].room_id, server_data.rooms[i].participant_count);
         }
     }
     

@@ -145,10 +145,6 @@ void init_database() {
   // - exam_questions: for exam rooms (linked to rooms.id)
   // - practice_questions: for practice rooms (linked to practice_rooms.id)
   // Run migration script if needed to transfer existing data
-  
-  printf("Database initialized successfully\n");
-  printf("Tables created: exam_questions (for exams), practice_questions (for practice)\n");
-  printf("Default admin account: username='admin', password='admin123'\n");
   const char *sql_alter_room_status = 
     "ALTER TABLE rooms ADD COLUMN room_status INTEGER DEFAULT 0;";
   sqlite3_exec(db, sql_alter_room_status, 0, 0, &err_msg);
@@ -220,7 +216,7 @@ void init_database() {
     err_msg = NULL;
   }
 
-  printf("Database initialized successfully\n");
+  // Chỉ giữ lại thông tin admin mặc định cho người quản trị
   printf("Default admin account: username='admin', password='admin123'\n");
 }
 
@@ -267,10 +263,6 @@ void load_users_from_db(void) {
       
       server_data.user_count++;
     }
-    
-    printf("[DB_LOAD] Loaded %d users into memory\n", server_data.user_count);
-  } else {
-    fprintf(stderr, "[DB_LOAD] Failed to load users from database\n");
   }
 
   sqlite3_finalize(stmt);

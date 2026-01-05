@@ -691,6 +691,13 @@ void delete_room(int socket_fd, int user_id, int room_id) {
     return;
   }
   
+  // ===== BROADCAST ROOM DELETED TO PARTICIPANTS =====
+  // Notify all participants that room is being deleted
+  char broadcast_msg[256];
+  snprintf(broadcast_msg, sizeof(broadcast_msg), "ROOM_DELETED|%d\n", room_id);
+  broadcast_to_room_participants(room_id, broadcast_msg);
+  printf("[INFO] Broadcasting ROOM_DELETED for room %d\n", room_id);
+  
   // Delete associated data: exam_answers, participants, questions
   const char *sqls[] = {
     "DELETE FROM exam_answers WHERE room_id = ?;",
@@ -1778,13 +1785,15 @@ void get_room_members(int socket_fd, int user_id, int room_id) {
     return;
   }
   
-  // Query database for room participants
-  const char *sql = "SELECT DISTINCT u.user_id, u.username, "
-                    "COALESCE(MAX(r.score), 0) as best_score "
-                    "FROM users u "
-                    "LEFT JOIN results r ON u.user_id = r.user_id AND r.room_id = ? "
-                    "WHERE EXISTS (SELECT 1 FROM results WHERE user_id = u.user_id AND room_id = ?) "
-                    "GROUP BY u.user_id, u.username "
+  // Query database for room participants from participants table
+  // Show all participants and their best score (if they have completed the exam)
+  const char *sql = "SELECT DISTINCT u.id, u.username, "
+                    "COALESCE(MAX(r.score), -1) as best_score "
+                    "FROM participants p "
+                    "JOIN users u ON p.user_id = u.id "
+                    "LEFT JOIN results r ON u.id = r.user_id AND r.room_id = p.room_id "
+                    "WHERE p.room_id = ? "
+                    "GROUP BY u.id, u.username "
                     "ORDER BY best_score DESC;";
   
   sqlite3_stmt *stmt;
@@ -1796,7 +1805,6 @@ void get_room_members(int socket_fd, int user_id, int room_id) {
   }
   
   sqlite3_bind_int(stmt, 1, room_id);
-  sqlite3_bind_int(stmt, 2, room_id);
   
   char response[BUFFER_SIZE];
   int offset = snprintf(response, sizeof(response), "ROOM_MEMBERS|%d|", room_id);

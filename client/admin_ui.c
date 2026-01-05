@@ -640,14 +640,14 @@ void create_admin_panel()
                                GINT_TO_POINTER(room_id));
                 gtk_box_pack_start(GTK_BOX(btn_box), questions_btn, FALSE, FALSE, 0);
                 
-                // View Members button
-                GtkWidget *members_btn = gtk_button_new_with_label("👥 Members");
-                style_button(members_btn, "#9b59b6");
-                gtk_widget_set_size_request(members_btn, 120, 40);
-                g_signal_connect(members_btn, "clicked", 
-                               G_CALLBACK(on_view_exam_members_clicked), 
+                // View Results button - detailed exam results
+                GtkWidget *results_btn = gtk_button_new_with_label("📊 Results");
+                style_button(results_btn, "#16a085");
+                gtk_widget_set_size_request(results_btn, 120, 40);
+                g_signal_connect(results_btn, "clicked", 
+                               G_CALLBACK(on_view_exam_results_clicked), 
                                GINT_TO_POINTER(room_id));
-                gtk_box_pack_start(GTK_BOX(btn_box), members_btn, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(btn_box), results_btn, FALSE, FALSE, 0);
                 
                 // Always show delete button
                 GtkWidget *delete_btn = gtk_button_new_with_label("🗑️ DELETE");
@@ -1244,8 +1244,8 @@ void on_view_exam_members_clicked(GtkWidget *widget, gpointer data) {
     snprintf(msg_text, sizeof(msg_text), "Total Members: %d\n\n", count);
     
     if (count > 0 && members_data && strcmp(members_data, "NONE\n") != 0) {
-        strcat(msg_text, "Username | Score\n");
-        strcat(msg_text, "────────────────\n");
+        strcat(msg_text, "Username          | Score\n");
+        strcat(msg_text, "──────────────────────────\n");
         
         char *token = strtok(members_data, ";");
         while (token != NULL) {
@@ -1254,7 +1254,11 @@ void on_view_exam_members_clicked(GtkWidget *widget, gpointer data) {
             
             if (sscanf(token, "%d:%49[^:]:%d", &user_id, username, &score) == 3) {
                 char line[256];
-                snprintf(line, sizeof(line), "%s | %d\n", username, score);
+                if (score == -1) {
+                    snprintf(line, sizeof(line), "%-18s| Not taken yet\n", username);
+                } else {
+                    snprintf(line, sizeof(line), "%-18s| %d\n", username, score);
+                }
                 strcat(msg_text, line);
             }
             
@@ -1267,4 +1271,212 @@ void on_view_exam_members_clicked(GtkWidget *widget, gpointer data) {
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "%s", msg_text);
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
+}
+
+// View exam results with detailed GTK interface
+void on_view_exam_results_clicked(GtkWidget *widget, gpointer data) {
+    int room_id = GPOINTER_TO_INT(data);
+    
+    // Flush old socket data
+    flush_socket_buffer(client.socket_fd);
+    
+    char msg[128];
+    snprintf(msg, sizeof(msg), "GET_ROOM_MEMBERS|%d\n", room_id);
+    send_message(msg);
+    
+    char recv_buf[BUFFER_SIZE * 2];
+    ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
+    
+    if (n <= 0 || strncmp(recv_buf, "ROOM_MEMBERS|", 13) != 0) {
+        show_error_dialog("Failed to load exam results");
+        return;
+    }
+    
+    // Parse: ROOM_MEMBERS|room_id|count|user_id:username:score;...
+    char *response_data = recv_buf + 13;
+    char *room_id_str = strtok(response_data, "|");
+    char *count_str = strtok(NULL, "|");
+    char *members_data = strtok(NULL, "|");
+    
+    int count = atoi(count_str ? count_str : "0");
+    (void)room_id_str; // Suppress unused warning
+    
+    // Create new window for results
+    GtkWidget *results_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(results_window), "📊 Exam Results");
+    gtk_window_set_default_size(GTK_WINDOW(results_window), 700, 500);
+    gtk_window_set_position(GTK_WINDOW(results_window), GTK_WIN_POS_CENTER);
+    gtk_window_set_transient_for(GTK_WINDOW(results_window), GTK_WINDOW(main_window));
+    gtk_window_set_modal(GTK_WINDOW(results_window), TRUE);
+    
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(vbox, 15);
+    gtk_widget_set_margin_start(vbox, 15);
+    gtk_widget_set_margin_end(vbox, 15);
+    gtk_widget_set_margin_bottom(vbox, 15);
+    gtk_container_add(GTK_CONTAINER(results_window), vbox);
+    
+    // Title
+    GtkWidget *title = gtk_label_new(NULL);
+    char title_markup[256];
+    snprintf(title_markup, sizeof(title_markup), 
+             "<span foreground='#2c3e50' weight='bold' size='18000'>📊 Exam Results - Room #%d</span>", 
+             room_id);
+    gtk_label_set_markup(GTK_LABEL(title), title_markup);
+    gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 5);
+    
+    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 5);
+    
+    // Statistics summary
+    GtkWidget *stats_label = gtk_label_new(NULL);
+    char stats_text[256];
+    snprintf(stats_text, sizeof(stats_text), 
+             "<span foreground='#27ae60' weight='bold'>Total Participants: %d</span>", count);
+    gtk_label_set_markup(GTK_LABEL(stats_label), stats_text);
+    gtk_box_pack_start(GTK_BOX(vbox), stats_label, FALSE, FALSE, 5);
+    
+    // Scrolled window for list
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_AUTOMATIC,
+                                   GTK_POLICY_AUTOMATIC);
+    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
+    
+    // Create list box
+    GtkWidget *list_box = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(list_box), GTK_SELECTION_NONE);
+    gtk_container_add(GTK_CONTAINER(scroll), list_box);
+    
+    // Add header row
+    GtkWidget *header_row = gtk_list_box_row_new();
+    GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_margin_top(header_box, 10);
+    gtk_widget_set_margin_bottom(header_box, 10);
+    gtk_widget_set_margin_start(header_box, 15);
+    gtk_widget_set_margin_end(header_box, 15);
+    
+    GtkWidget *header_rank = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(header_rank), "<b>Rank</b>");
+    gtk_widget_set_size_request(header_rank, 60, -1);
+    gtk_label_set_xalign(GTK_LABEL(header_rank), 0.0);
+    
+    GtkWidget *header_name = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(header_name), "<b>Student Name</b>");
+    gtk_widget_set_size_request(header_name, 250, -1);
+    gtk_label_set_xalign(GTK_LABEL(header_name), 0.0);
+    
+    GtkWidget *header_score = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(header_score), "<b>Score</b>");
+    gtk_widget_set_size_request(header_score, 100, -1);
+    gtk_label_set_xalign(GTK_LABEL(header_score), 0.0);
+    
+    GtkWidget *header_status = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(header_status), "<b>Status</b>");
+    gtk_widget_set_size_request(header_status, 150, -1);
+    gtk_label_set_xalign(GTK_LABEL(header_status), 0.0);
+    
+    gtk_box_pack_start(GTK_BOX(header_box), header_rank, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(header_box), header_name, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(header_box), header_score, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(header_box), header_status, FALSE, FALSE, 0);
+    
+    gtk_container_add(GTK_CONTAINER(header_row), header_box);
+    gtk_list_box_insert(GTK_LIST_BOX(list_box), header_row, -1);
+    
+    // Parse and display results
+    if (count > 0 && members_data && strcmp(members_data, "NONE\n") != 0) {
+        char *token = strtok(members_data, ";");
+        int rank = 1;
+        
+        while (token != NULL) {
+            int user_id, score;
+            char username[50];
+            
+            if (sscanf(token, "%d:%49[^:]:%d", &user_id, username, &score) == 3) {
+                GtkWidget *row = gtk_list_box_row_new();
+                GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+                gtk_widget_set_margin_top(row_box, 8);
+                gtk_widget_set_margin_bottom(row_box, 8);
+                gtk_widget_set_margin_start(row_box, 15);
+                gtk_widget_set_margin_end(row_box, 15);
+                
+                // Rank
+                GtkWidget *rank_label = gtk_label_new(NULL);
+                char rank_text[32];
+                if (score >= 0) {
+                    snprintf(rank_text, sizeof(rank_text), "#%d", rank++);
+                } else {
+                    snprintf(rank_text, sizeof(rank_text), "-");
+                }
+                gtk_label_set_text(GTK_LABEL(rank_label), rank_text);
+                gtk_widget_set_size_request(rank_label, 60, -1);
+                gtk_label_set_xalign(GTK_LABEL(rank_label), 0.0);
+                
+                // Username
+                GtkWidget *name_label = gtk_label_new(username);
+                gtk_widget_set_size_request(name_label, 250, -1);
+                gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
+                
+                // Score
+                GtkWidget *score_label = gtk_label_new(NULL);
+                char score_markup[128];
+                if (score >= 0) {
+                    const char *color = score >= 80 ? "#27ae60" : (score >= 50 ? "#f39c12" : "#e74c3c");
+                    snprintf(score_markup, sizeof(score_markup), 
+                             "<span foreground='%s' weight='bold' size='12000'>%d</span>", 
+                             color, score);
+                } else {
+                    snprintf(score_markup, sizeof(score_markup), 
+                             "<span foreground='#95a5a6'>-</span>");
+                }
+                gtk_label_set_markup(GTK_LABEL(score_label), score_markup);
+                gtk_widget_set_size_request(score_label, 100, -1);
+                gtk_label_set_xalign(GTK_LABEL(score_label), 0.0);
+                
+                // Status
+                GtkWidget *status_label = gtk_label_new(NULL);
+                char status_markup[128];
+                if (score >= 0) {
+                    snprintf(status_markup, sizeof(status_markup), 
+                             "<span foreground='#27ae60'>✓ Đã thi</span>");
+                } else {
+                    snprintf(status_markup, sizeof(status_markup), 
+                             "<span foreground='#95a5a6'>⏳ Chưa thi</span>");
+                }
+                gtk_label_set_markup(GTK_LABEL(status_label), status_markup);
+                gtk_widget_set_size_request(status_label, 150, -1);
+                gtk_label_set_xalign(GTK_LABEL(status_label), 0.0);
+                
+                gtk_box_pack_start(GTK_BOX(row_box), rank_label, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(row_box), name_label, TRUE, TRUE, 0);
+                gtk_box_pack_start(GTK_BOX(row_box), score_label, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(row_box), status_label, FALSE, FALSE, 0);
+                
+                gtk_container_add(GTK_CONTAINER(row), row_box);
+                gtk_list_box_insert(GTK_LIST_BOX(list_box), row, -1);
+            }
+            
+            token = strtok(NULL, ";");
+        }
+    } else {
+        GtkWidget *empty_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(empty_label), 
+                            "<span foreground='#95a5a6' size='12000'>No participants yet</span>");
+        gtk_widget_set_margin_top(empty_label, 50);
+        gtk_widget_set_margin_bottom(empty_label, 50);
+        gtk_box_pack_start(GTK_BOX(vbox), empty_label, TRUE, TRUE, 0);
+    }
+    
+    // Close button
+    GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *close_btn = gtk_button_new_with_label("✖ Close");
+    style_button(close_btn, "#95a5a6");
+    gtk_box_pack_end(GTK_BOX(button_box), close_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
+    
+    g_signal_connect_swapped(close_btn, "clicked", G_CALLBACK(gtk_widget_destroy), results_window);
+    g_signal_connect(results_window, "destroy", G_CALLBACK(gtk_widget_destroyed), &results_window);
+    
+    gtk_widget_show_all(results_window);
 }

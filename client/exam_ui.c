@@ -33,6 +33,7 @@ static Question *questions = NULL;
 // Forward declarations
 static void start_exam_ui(int room_id);
 static void start_exam_ui_from_response(int room_id, char *buffer);
+static gboolean show_room_deleted_notification_idle(gpointer user_data);
 
 // Callback when ROOM_STARTED broadcast received
 static void on_room_started_broadcast(int room_id, long start_time) {
@@ -51,6 +52,59 @@ static void on_room_started_broadcast(int room_id, long start_time) {
         // Start the actual exam
         start_exam_ui(room_id);
     }
+}
+
+// Callback when ROOM_DELETED broadcast received
+static void on_room_deleted_broadcast(int room_id) {
+    printf("[EXAM_UI] Received ROOM_DELETED for room %d\n", room_id);
+    
+    // Check if we're currently in this room
+    if (exam_room_id == room_id) {
+        // Stop timer
+        if (timer_id > 0) {
+            g_source_remove(timer_id);
+            timer_id = 0;
+        }
+        
+        // Stop broadcast listener
+        broadcast_stop_listener();
+        
+        // Show notification using g_idle_add to run in main thread
+        g_idle_add((GSourceFunc)show_room_deleted_notification_idle, GINT_TO_POINTER(room_id));
+    }
+    
+    // Check if we're waiting for this room
+    if (waiting_room_id == room_id && waiting_dialog != NULL) {
+        gtk_dialog_response(GTK_DIALOG(waiting_dialog), GTK_RESPONSE_CANCEL);
+        broadcast_stop_listener();
+        waiting_room_id = 0;
+        
+        g_idle_add((GSourceFunc)show_room_deleted_notification_idle, GINT_TO_POINTER(room_id));
+    }
+}
+
+// Helper function to show room deleted notification in main thread
+static gboolean show_room_deleted_notification_idle(gpointer user_data) {
+    int room_id = GPOINTER_TO_INT(user_data);
+    
+    // Cleanup exam UI
+    cleanup_exam_ui();
+    
+    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                               GTK_DIALOG_MODAL,
+                                               GTK_MESSAGE_WARNING,
+                                               GTK_BUTTONS_OK,
+                                               "⚠️ Room Deleted");
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+                                             "Room #%d has been deleted by the administrator.\nYou will be returned to the main menu.",
+                                             room_id);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    
+    // Return to main menu
+    create_test_mode_screen();
+    
+    return FALSE; // Remove this idle callback
 }
 
 // Timer callback - đếm ngược
@@ -286,8 +340,9 @@ void create_exam_page(int room_id) {
         
         waiting_room_id = room_id;
         
-        // Register callback for ROOM_STARTED broadcast
+        // Register callbacks for broadcasts
         broadcast_on_room_started(on_room_started_broadcast);
+        broadcast_on_room_deleted(on_room_deleted_broadcast);
         
         // Start listening for broadcasts
         broadcast_start_listener();
@@ -455,6 +510,14 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         return;
+    }
+    
+    // Register broadcast callback for ROOM_DELETED
+    broadcast_on_room_deleted(on_room_deleted_broadcast);
+    
+    // Start listening for broadcasts during exam
+    if (!broadcast_is_listening()) {
+        broadcast_start_listener();
     }
     
     printf("[DEBUG] Creating UI with %d questions...\n", total_questions);

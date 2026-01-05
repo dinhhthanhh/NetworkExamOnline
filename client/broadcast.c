@@ -13,6 +13,7 @@ extern ClientData client;
 // Callbacks
 static RoomStartedCallback room_started_callback = NULL;
 static RoomCreatedCallback room_created_callback = NULL;
+static RoomDeletedCallback room_deleted_callback = NULL;
 
 // Listener state
 static guint timer_id = 0;
@@ -37,7 +38,8 @@ static void set_blocking(int sockfd) {
 // Check if message is a broadcast (not a regular response)
 static int is_broadcast_message(const char *message) {
     return (strncmp(message, "ROOM_STARTED", 12) == 0 ||
-            strncmp(message, "ROOM_CREATED", 12) == 0);
+            strncmp(message, "ROOM_CREATED", 12) == 0 ||
+            strncmp(message, "ROOM_DELETED", 12) == 0);
 }
 
 // Parse and handle broadcast messages
@@ -81,6 +83,23 @@ static void handle_broadcast_message(const char *message) {
             
             printf("[BROADCAST] Room %d created: %s (%d min)\n", room_id, room_name, duration);
             room_created_callback(room_id, room_name, duration);
+        }
+    }
+    // Parse ROOM_DELETED|room_id
+    else if (strncmp(message, "ROOM_DELETED", 12) == 0) {
+        char msg_copy[512];
+        strncpy(msg_copy, message, sizeof(msg_copy) - 1);
+        msg_copy[sizeof(msg_copy) - 1] = '\0';
+        
+        char *ptr = msg_copy;
+        strtok(ptr, "|"); // Skip "ROOM_DELETED"
+        char *room_id_str = strtok(NULL, "|");
+        
+        if (room_id_str && room_deleted_callback) {
+            int room_id = atoi(room_id_str);
+            
+            printf("[BROADCAST] Room %d was deleted by admin\n", room_id);
+            room_deleted_callback(room_id);
         }
     }
 }
@@ -188,4 +207,9 @@ void broadcast_on_room_started(RoomStartedCallback callback) {
 // Register callback for ROOM_CREATED
 void broadcast_on_room_created(RoomCreatedCallback callback) {
     room_created_callback = callback;
+}
+
+// Register callback for ROOM_DELETED
+void broadcast_on_room_deleted(RoomDeletedCallback callback) {
+    room_deleted_callback = callback;
 }

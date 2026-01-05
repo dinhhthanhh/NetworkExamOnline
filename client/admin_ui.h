@@ -35,6 +35,7 @@ void on_start_room_clicked(GtkWidget *widget, gpointer data);
 void on_close_room_clicked(GtkWidget *widget, gpointer data);
 void on_delete_room_clicked(GtkWidget *widget, gpointer data);
 void on_view_exam_members_clicked(GtkWidget *widget, gpointer data);
+void on_view_exam_results_clicked(GtkWidget *widget, gpointer data);
 
 // External global variables
 extern int current_user_id;

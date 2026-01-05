@@ -619,10 +619,35 @@ void show_practice_room_screen(void) {
         if (current_q->user_answer == i) {
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio_buttons[i]), TRUE);
         }
-        
+
+        // Color the option for the current question based on selection/result
+        GtkWidget *child = gtk_bin_get_child(GTK_BIN(radio_buttons[i]));
+        if (GTK_IS_LABEL(child)) {
+            const char *color = "#2c3e50";
+            const char *weight = "normal";
+
+            if (current_q->user_answer != -1 && !current_practice.is_finished && current_q->user_answer == i) {
+                // While doing practice, highlight selected option
+                if (current_practice.show_answers && current_q->is_correct != -1) {
+                    // Admin shows answers and we have result
+                    color = (current_q->is_correct == 1) ? "#27ae60" : "#e74c3c";
+                } else {
+                    // No result yet or show_answers disabled -> blue
+                    color = "#3498db";
+                }
+                weight = "bold";
+            }
+
+            char markup[320];
+            snprintf(markup, sizeof(markup),
+                     "<span foreground='%s' weight='%s'>%s</span>",
+                     color, weight, opt_text);
+            gtk_label_set_markup(GTK_LABEL(child), markup);
+        }
+
         g_object_set_data(G_OBJECT(radio_buttons[i]), "answer_index", GINT_TO_POINTER(i));
         g_signal_connect(radio_buttons[i], "toggled", G_CALLBACK(on_submit_practice_answer), NULL);
-        
+
         gtk_box_pack_start(GTK_BOX(q_box), radio_buttons[i], FALSE, FALSE, 0);
     }
     

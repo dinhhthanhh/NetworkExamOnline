@@ -287,7 +287,15 @@ void submit_test(int socket_fd, int user_id, int room_id)
            "WHERE user_id = %d AND room_id = %d",
            user_id, room_id);
   sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
-  printf("[SUBMIT] Marked user %d as taken exam in room %d\n", user_id, room_id);
+
+  // Đồng bộ thêm với bảng room_participants (nếu tồn tại) để chặn JOIN_ROOM thi lại
+  snprintf(update_taken_query, sizeof(update_taken_query),
+           "UPDATE room_participants SET has_taken_exam = 1 "
+           "WHERE user_id = %d AND room_id = %d",
+           user_id, room_id);
+  sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
+
+  printf("[SUBMIT] Marked user %d as taken exam in room %d (participants + room_participants)\n", user_id, room_id);
 
   char response[200];
   snprintf(response, sizeof(response), "SUBMIT_TEST_OK|%d|%d|%ld\n", 
@@ -321,12 +329,13 @@ void view_results(int socket_fd, int room_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
-// Auto-submit khi user disconnect (được gọi từ handle_client khi detect disconnect)
+// Auto-submit khi user disconnect hoặc hết thời gian.
+// LƯU Ý: Hàm này GIẢ ĐỊNH server_data.lock ĐÃ ĐƯỢC GIỮ bởi caller.
+// - handle_client: nếu muốn gọi trực tiếp, phải lock trước.
+// - handle_resume_exam: đã lock rooms/ServerData trước khi gọi.
 void auto_submit_on_disconnect(int user_id, int room_id)
 {
-  pthread_mutex_lock(&server_data.lock);
-  
-  printf("[INFO] Auto-submit for user %d in room %d (disconnect detected)\n", user_id, room_id);
+    printf("[INFO] Auto-submit for user %d in room %d (disconnect/timeout)\n", user_id, room_id);
   
   // Kiểm tra user đã bắt đầu thi chưa
   char check_query[256];
@@ -336,7 +345,6 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-      pthread_mutex_unlock(&server_data.lock);
       return;
   }
   
@@ -347,7 +355,6 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   sqlite3_finalize(stmt);
   
   if (start_time == 0) {
-      pthread_mutex_unlock(&server_data.lock);
       return; // Chưa bắt đầu thi
   }
   
@@ -360,7 +367,6 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   if (sqlite3_prepare_v2(db, check_result, -1, &stmt, NULL) == SQLITE_OK) {
       if (sqlite3_step(stmt) == SQLITE_ROW) {
           sqlite3_finalize(stmt);
-          pthread_mutex_unlock(&server_data.lock);
           return; // Đã submit rồi
       }
       sqlite3_finalize(stmt);
@@ -414,11 +420,23 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   if (err_msg) {
       sqlite3_free(err_msg);
   }
+
+    // Đánh dấu đã thi trong cả participants và room_participants để chặn JOIN_ROOM thi lại
+    char update_taken_query[256];
+    snprintf(update_taken_query, sizeof(update_taken_query),
+                     "UPDATE participants SET has_taken_exam = 1 "
+                     "WHERE user_id = %d AND room_id = %d",
+                     user_id, room_id);
+    sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
+
+    snprintf(update_taken_query, sizeof(update_taken_query),
+                     "UPDATE room_participants SET has_taken_exam = 1 "
+                     "WHERE user_id = %d AND room_id = %d",
+                     user_id, room_id);
+    sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
   
-  log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
-  printf("[INFO] Auto-submitted for user %d - Score: %d/%d\n", user_id, score, total_questions);
-  
-  pthread_mutex_unlock(&server_data.lock);
+    log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
+    printf("[INFO] Auto-submitted for user %d - Score: %d/%d (marked as taken)\n", user_id, score, total_questions);
 }
 
 // Public wrapper để flush answers (dùng cho external calls)

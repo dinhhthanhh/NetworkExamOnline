@@ -1144,12 +1144,42 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     long max_time = duration_minutes * 60;
     long remaining = max_time - elapsed;
     
-    // Nếu hết thời gian, auto submit
+    // Nếu hết thời gian, auto submit và trả luôn điểm
     if (remaining <= 0) {
-        auto_submit_on_disconnect(user_id, room_id);
-        send(socket_fd, "RESUME_TIME_EXPIRED\n", 20, 0);
-        pthread_mutex_unlock(&server_data.lock);
-        return;
+      // Tự động chấm và lưu kết quả nếu chưa có
+      auto_submit_on_disconnect(user_id, room_id);
+
+      // Lấy điểm vừa lưu trong bảng results
+      int score = 0, total_questions = 0, time_minutes = 0;
+      char result_query[256];
+      snprintf(result_query, sizeof(result_query),
+           "SELECT score, total_questions, time_taken FROM results "
+           "WHERE room_id = %d AND user_id = %d ORDER BY id DESC LIMIT 1",
+           room_id, user_id);
+
+      if (sqlite3_prepare_v2(db, result_query, -1, &stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+          score = sqlite3_column_int(stmt, 0);
+          total_questions = sqlite3_column_int(stmt, 1);
+          long time_taken = sqlite3_column_int64(stmt, 2);
+          time_minutes = (int)(time_taken / 60);
+        }
+        sqlite3_finalize(stmt);
+      }
+
+      char response[256];
+      if (total_questions > 0) {
+        snprintf(response, sizeof(response),
+             "RESUME_TIME_EXPIRED|%d|%d|%d\n",
+             score, total_questions, time_minutes);
+      } else {
+        // Fallback nếu không lấy được kết quả
+        snprintf(response, sizeof(response), "RESUME_TIME_EXPIRED\n");
+      }
+
+      send(socket_fd, response, strlen(response), 0);
+      pthread_mutex_unlock(&server_data.lock);
+      return;
     }
     
     // Lấy danh sách câu hỏi và câu trả lời đã lưu

@@ -17,9 +17,9 @@ static int exam_duration = 0;
 static time_t exam_start_time = 0;
 static guint timer_id = 0;
 static GtkWidget *exam_timer_label = NULL;
-static GtkWidget **question_radios = NULL; // Array of radio button groups
 static GtkWidget **question_frames = NULL; // Array of question frames for highlighting
 static int *answered_questions = NULL; // Track which questions are answered (1=answered, 0=not)
+static int *selected_answers = NULL;   // Track selected option per question (-1 if none)
 static int total_questions = 0;
 
 // Waiting screen state
@@ -145,8 +145,10 @@ static gboolean update_exam_timer(gpointer data) {
     
     if (remaining <= 0) {
         // Hết giờ - auto submit
-        gtk_label_set_markup(GTK_LABEL(timer_label), 
-                    "<span foreground='red' size='16000' weight='bold'>TIME'S UP!</span>");
+        if (exam_timer_label && GTK_IS_WIDGET(exam_timer_label)) {
+            gtk_label_set_markup(GTK_LABEL(exam_timer_label),
+                "<span foreground='red' size='16000' weight='bold'>TIME'S UP!</span>");
+        }
         
         // Stop timer trước
         if (timer_id > 0) {
@@ -159,7 +161,26 @@ static gboolean update_exam_timer(gpointer data) {
             broadcast_stop_listener();
             printf("[EXAM_UI] Stopped broadcast listener before auto-submit\n");
         }
-        
+
+        // If connection is already lost, abort auto-submit gracefully
+        if (client.socket_fd <= 0 || !check_connection()) {
+            printf("[EXAM_UI] Connection lost before auto-submit; skipping SUBMIT_TEST\n");
+            cleanup_exam_ui();
+
+            GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                                             GTK_DIALOG_MODAL,
+                                                             GTK_MESSAGE_ERROR,
+                                                             GTK_BUTTONS_OK,
+                                                             "Time's Up (Offline)");
+            gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
+                                                     "Exam time is over but the connection to the server was lost.\nPlease reconnect to see your final result.");
+            gtk_dialog_run(GTK_DIALOG(error_dialog));
+            gtk_widget_destroy(error_dialog);
+
+            create_test_mode_screen();
+            return FALSE;
+        }
+
         // CRITICAL: Ensure blocking mode
         if (client.socket_fd > 0) {
             int flags = fcntl(client.socket_fd, F_GETFL, 0);
@@ -168,17 +189,17 @@ static gboolean update_exam_timer(gpointer data) {
                 printf("[EXAM_UI] Socket set to blocking mode for auto-submit\n");
             }
         }
-        
+
         // Lưu room_id trước khi cleanup
         int submit_room_id = exam_room_id;
-        
+
         printf("[DEBUG] Timeout - Auto-submitting exam for room: %d\n", submit_room_id);
-        
+
         // Gửi SUBMIT_TEST
         char msg[64];
         snprintf(msg, sizeof(msg), "SUBMIT_TEST|%d\n", submit_room_id);
         send_message(msg);
-        
+
         char buffer[BUFFER_SIZE];
         ssize_t n = receive_message(buffer, sizeof(buffer));
         
@@ -235,7 +256,9 @@ static gboolean update_exam_timer(gpointer data) {
              "<span foreground='%s' size='16000' weight='bold'>%02d:%02d</span>",
              color, minutes, seconds);
     
-    gtk_label_set_markup(GTK_LABEL(exam_timer_label), timer_text);
+    if (exam_timer_label && GTK_IS_WIDGET(exam_timer_label)) {
+        gtk_label_set_markup(GTK_LABEL(exam_timer_label), timer_text);
+    }
     
     return TRUE; // Continue timer
 }
@@ -247,24 +270,25 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     }
     
     int question_index = GPOINTER_TO_INT(data);
-    int question_id = questions[question_index].question_id;
-    
-    // Tìm đáp án được chọn (0=A, 1=B, 2=C, 3=D)
-    int selected = -1;
-    for (int i = 0; i < 4; i++) {
-        GtkWidget *radio = question_radios[question_index * 4 + i];
-        if(!radio) continue;
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(radio))) {
-            selected = i;
-            break;
-        }
+    if (question_index < 0 || question_index >= total_questions) {
+        return;
     }
-    
-    if (selected == -1) return;
+
+    int question_id = questions[question_index].question_id;
+
+    // Lấy đáp án được chọn (0=A, 1=B, 2=C, 3=D) từ widget
+    int selected = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "answer_index"));
+    if (selected < 0 || selected > 3) {
+        return;
+    }
     
     // Mark question as answered
     if (answered_questions) {
         answered_questions[question_index] = 1;
+    }
+
+    if (selected_answers && question_index >= 0 && question_index < total_questions) {
+        selected_answers[question_index] = selected;
     }
     
     // Gửi SAVE_ANSWER đến server
@@ -339,8 +363,8 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
         gtk_widget_destroy(dialog);
         
         if (response != GTK_RESPONSE_YES) {
-            // Resume timer
-            timer_id = g_timeout_add(1000, update_timer, NULL);
+            // Resume exam timer
+            timer_id = g_timeout_add(1000, update_exam_timer, NULL);
             return;
         }
     }
@@ -568,9 +592,14 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     
     // Allocate memory
     questions = malloc(sizeof(Question) * total_questions);
-    question_radios = malloc(sizeof(GtkWidget*) * total_questions * 4);
     question_frames = malloc(sizeof(GtkWidget*) * total_questions);
     answered_questions = calloc(total_questions, sizeof(int)); // Initialize to 0
+    selected_answers = malloc(sizeof(int) * total_questions);
+    if (selected_answers) {
+        for (int i = 0; i < total_questions; i++) {
+            selected_answers[i] = -1;
+        }
+    }
     
     // Parse lại từ original buffer để lấy questions
     ptr = original_buffer;
@@ -778,43 +807,39 @@ void show_exam_question_screen(void) {
     
     // Radio buttons cho options
     const char *labels[] = {"A", "B", "C", "D"};
-    
-    // Dummy radio ẩn
+
+    // Dummy radio ẩn để tạo group ban đầu, tránh auto-select
     GtkWidget *dummy_radio = gtk_radio_button_new(NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dummy_radio), TRUE);
     gtk_widget_set_no_show_all(dummy_radio, TRUE);
     gtk_widget_hide(dummy_radio);
     gtk_box_pack_start(GTK_BOX(q_box), dummy_radio, FALSE, FALSE, 0);
-    
+
     GSList *group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(dummy_radio));
-    
+
+    int previously_selected = -1;
+    if (selected_answers && current_question_index >= 0 && current_question_index < total_questions) {
+        previously_selected = selected_answers[current_question_index];
+    }
+
     for (int j = 0; j < 4; j++) {
         char option_text[200];
         snprintf(option_text, sizeof(option_text),
                 "%s. %s", labels[j], current_q->options[j]);
-        
+
         GtkWidget *radio = gtk_radio_button_new_with_label(group, option_text);
         group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
-        
-        // Check if this answer was previously selected
-        if (answered_questions[current_question_index]) {
-            // Find which answer was selected
-            for (int k = 0; k < 4; k++) {
-                GtkWidget *prev_radio = question_radios[current_question_index * 4 + k];
-                if (prev_radio && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(prev_radio))) {
-                    if (k == j) {
-                        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), TRUE);
-                    }
-                    break;
-                }
-            }
+
+        // Khôi phục đáp án đã chọn (nếu có)
+        if (previously_selected == j) {
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), TRUE);
         }
-        
-        g_signal_connect(radio, "toggled", 
+
+        g_object_set_data(G_OBJECT(radio), "answer_index", GINT_TO_POINTER(j));
+        g_signal_connect(radio, "toggled",
             G_CALLBACK(on_answer_selected),
             GINT_TO_POINTER(current_question_index));
-        
-        question_radios[current_question_index * 4 + j] = radio;
+
         gtk_box_pack_start(GTK_BOX(q_box), radio, FALSE, FALSE, 0);
     }
     
@@ -843,16 +868,11 @@ void show_exam_question_screen(void) {
     }
     
     gtk_box_pack_start(GTK_BOX(right_panel), nav_btn_box, FALSE, FALSE, 0);
-    
+
     gtk_box_pack_start(GTK_BOX(main_hbox), right_panel, TRUE, TRUE, 0);
-    
-    // Show UI - Remove old widget properly
-    GtkWidget *old_child = gtk_bin_get_child(GTK_BIN(main_window));
-    if (old_child) {
-        gtk_container_remove(GTK_CONTAINER(main_window), old_child);
-    }
-    gtk_container_add(GTK_CONTAINER(main_window), main_hbox);
-    gtk_widget_show_all(main_window);
+
+    // Use shared view helper to manage main_window content safely
+    show_view(main_hbox);
 }
 
 // Navigation callback
@@ -881,22 +901,13 @@ void cleanup_exam_ui() {
         timer_id = 0;
     }
     
-    // Remove exam widget from window properly
-    GtkWidget *old_child = gtk_bin_get_child(GTK_BIN(main_window));
-    if (old_child && GTK_IS_WIDGET(old_child)) {  // ← CHECK TRƯỚC KHI REMOVE
-        gtk_container_remove(GTK_CONTAINER(main_window), old_child);
-    }
+        // The removal of the main_window child is now managed by higher-level screens.
     
     if (questions) {
         free(questions);
         questions = NULL;
     }
-    
-    if (question_radios) {
-        free(question_radios);
-        question_radios = NULL;
-    }
-    
+
     if (question_frames) {
         free(question_frames);
         question_frames = NULL;
@@ -905,6 +916,11 @@ void cleanup_exam_ui() {
     if (answered_questions) {
         free(answered_questions);
         answered_questions = NULL;
+    }
+
+    if (selected_answers) {
+        free(selected_answers);
+        selected_answers = NULL;
     }
     
     // ===== THÊM MỚI: Restore blocking mode =====
@@ -961,9 +977,14 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     
     // Allocate memory
     questions = malloc(sizeof(Question) * total_questions);
-    question_radios = malloc(sizeof(GtkWidget*) * total_questions * 4);
     question_frames = malloc(sizeof(GtkWidget*) * total_questions);
     answered_questions = calloc(total_questions, sizeof(int));
+    selected_answers = malloc(sizeof(int) * total_questions);
+    if (selected_answers) {
+        for (int i = 0; i < total_questions; i++) {
+            selected_answers[i] = -1;
+        }
+    }
     
     // Parse questions again from original buffer
     free(data_copy);
@@ -1008,8 +1029,12 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
         
         // Parse saved answer
         char *saved_str = strsep(&q_ptr, ":");
-        if (saved_str && atoi(saved_str) >= 0) {
+        int saved_val = (saved_str ? atoi(saved_str) : -1);
+        if (saved_val >= 0) {
             answered_questions[q_idx] = 1;
+            if (selected_answers) {
+                selected_answers[q_idx] = saved_val;
+            }
         }
         
         printf("[DEBUG] Parsed Q%d: id=%d [%s] (answered=%d)\n", 

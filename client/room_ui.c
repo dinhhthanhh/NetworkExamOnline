@@ -209,16 +209,43 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
             return;
         }
         
-        // Nếu hết thời gian - báo lỗi
+        // Nếu hết thời gian - báo điểm và không cho resume
         if (resume_n > 0 && strstr(resume_buffer, "RESUME_TIME_EXPIRED")) {
+            int score = -1, total = 0, time_minutes = 0;
+
+            // Thử parse dạng: RESUME_TIME_EXPIRED|score|total|time_minutes
+            char tmp[BUFFER_SIZE];
+            strncpy(tmp, resume_buffer, sizeof(tmp) - 1);
+            tmp[sizeof(tmp) - 1] = '\0';
+
+            char *ptr = tmp;
+            char *token = strtok(ptr, "|"); // RESUME_TIME_EXPIRED
+            token = strtok(NULL, "|");
+            if (token) score = atoi(token);
+            token = strtok(NULL, "|");
+            if (token) total = atoi(token);
+            token = strtok(NULL, "|\n");
+            if (token) time_minutes = atoi(token);
+
             GtkWidget *error_dialog = gtk_message_dialog_new(
                 GTK_WINDOW(main_window),
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                     GTK_MESSAGE_ERROR,
                     GTK_BUTTONS_OK,
                     "Time Expired");
-            gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
-                "Your exam session has expired. You cannot resume.");
+
+            if (score >= 0 && total > 0) {
+                gtk_message_dialog_format_secondary_text(
+                    GTK_MESSAGE_DIALOG(error_dialog),
+                    "Your exam session has expired.\n"
+                    "Final score: %d/%d (%.1f%%)\nTime taken: %d minutes",
+                    score, total, (score * 100.0) / total, time_minutes);
+            } else {
+                gtk_message_dialog_format_secondary_text(
+                    GTK_MESSAGE_DIALOG(error_dialog),
+                    "Your exam session has expired. You cannot resume.");
+            }
+
             gtk_dialog_run(GTK_DIALOG(error_dialog));
             gtk_widget_destroy(error_dialog);
             return;

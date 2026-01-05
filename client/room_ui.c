@@ -159,6 +159,10 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         return;
     }
 
+    // QUAN TRỌNG: Stop broadcast listener cũ (nếu có) trước khi join room mới
+    // Tránh xung đột khi user đang wait room A nhưng join room B
+    broadcast_stop_listener();
+
     // Gửi lệnh JOIN_ROOM với room_id đã chọn
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "JOIN_ROOM|%d\n", selected_room_id);
@@ -216,28 +220,10 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         
         // Không có session cũ - BEGIN_EXAM trực tiếp (không cần dialog)
         printf("[ROOM_UI] Starting new exam session\n");
-        char begin_cmd[128];
-        snprintf(begin_cmd, sizeof(begin_cmd), "BEGIN_EXAM|%d\n", selected_room_id);
-        send_message(begin_cmd);
         
-        char exam_buffer[BUFFER_SIZE];
-        ssize_t exam_n = receive_message(exam_buffer, sizeof(exam_buffer));
-        
-        // BEGIN_EXAM sẽ trả về BEGIN_EXAM_OK hoặc EXAM_WAITING
-        // exam_ui.c sẽ xử lý logic waiting nếu cần
-        if (exam_n > 0) {
-            create_exam_page(selected_room_id);
-        } else {
-            GtkWidget *error_dialog = gtk_message_dialog_new(
-                GTK_WINDOW(main_window),
-                GTK_DIALOG_DESTROY_WITH_PARENT,
-                GTK_MESSAGE_ERROR,
-                GTK_BUTTONS_OK,
-                "❌ Failed to start exam:\n\n%s",
-                exam_buffer[0] ? exam_buffer : "No response");
-            gtk_dialog_run(GTK_DIALOG(error_dialog));
-            gtk_widget_destroy(error_dialog);
-        }
+        // KHÔNG gửi BEGIN_EXAM ở đây nữa - để create_exam_page() tự gửi
+        // Tránh duplicate request gây parsing error
+        create_exam_page(selected_room_id);
     }
     else
     {

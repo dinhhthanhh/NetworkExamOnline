@@ -48,7 +48,6 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
     return;
   }
   
-  // num_q không còn cần validate - questions sẽ được add sau via ADD_QUESTION
   // time_limit validation
   if (time_limit <= 0 || time_limit > 180) {
     char response[] = "CREATE_ROOM_FAIL|Invalid time limit (1-180 minutes)\n";
@@ -155,9 +154,6 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
          creator_id, room_name, room_id);
   
   pthread_mutex_unlock(&server_data.lock);
-  
-  // ===== BROADCAST ROOM CREATED =====
-  broadcast_room_created(room_id, room_name, time_limit);
 }
 
 void list_test_rooms(int socket_fd) {
@@ -343,63 +339,6 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_unlock(&server_data.lock);
 }
 
-/*
-// REMOVED: set_room_max_attempts - not needed anymore
-void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_attempts) {
-  pthread_mutex_lock(&server_data.lock);
-  
-  // Kiểm tra user có phải host của room không
-  char check_query[256];
-  snprintf(check_query, sizeof(check_query),
-           "SELECT host_id FROM rooms WHERE id = %d", room_id);
-  
-  sqlite3_stmt *stmt;
-  if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-    send(socket_fd, "ERROR|Database error\n", 21, 0);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  int host_id = -1;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-    host_id = sqlite3_column_int(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-  
-  if (host_id != user_id) {
-    send(socket_fd, "ERROR|Only room host can set max attempts\n", 43, 0);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  // Update max_attempts
-  char update_query[256];
-  snprintf(update_query, sizeof(update_query),
-           "UPDATE rooms SET max_attempts = %d WHERE id = %d",
-           max_attempts, room_id);
-  
-  char *err_msg = NULL;
-  if (sqlite3_exec(db, update_query, NULL, NULL, &err_msg) != SQLITE_OK) {
-    char response[128];
-    snprintf(response, sizeof(response), "ERROR|%s\n", 
-             err_msg ? err_msg : "Failed to update");
-    send(socket_fd, response, strlen(response), 0);
-    if (err_msg) sqlite3_free(err_msg);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  char response[128];
-  snprintf(response, sizeof(response), 
-           "SET_MAX_ATTEMPTS_OK|%d|%d\n", room_id, max_attempts);
-  send(socket_fd, response, strlen(response), 0);
-  
-  printf("[INFO] Room %d max_attempts set to %d by user %d\n", 
-         room_id, max_attempts, user_id);
-  
-  pthread_mutex_unlock(&server_data.lock);
-}
-*/
 
 void close_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_lock(&server_data.lock);
@@ -649,10 +588,11 @@ void start_test(int socket_fd, int user_id, int room_id) {
   server_data.rooms[room_idx].room_status = 1;  // STARTED
   server_data.rooms[room_idx].exam_start_time = start_time;
 
-  // Update database status
+  // Update database status AND exam_start_time
   char update_sql[256];
   snprintf(update_sql, sizeof(update_sql),
-           "UPDATE rooms SET room_status = 1 WHERE id = %d", room_id);
+           "UPDATE rooms SET room_status = 1, exam_start_time = %ld WHERE id = %d", 
+           start_time, room_id);
   char *err_msg = NULL;
   if (sqlite3_exec(db, update_sql, 0, 0, &err_msg) != SQLITE_OK) {
     printf("[ERROR] Failed to update room status in DB: %s\n", err_msg);
@@ -701,7 +641,7 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         // Load info từ DB
         char room_info_query[256];
         snprintf(room_info_query, sizeof(room_info_query),
-                 "SELECT name, host_id, duration FROM rooms WHERE id = %d", room_id);
+                 "SELECT name, host_id, duration, room_status, exam_start_time FROM rooms WHERE id = %d", room_id);
         sqlite3_stmt *room_stmt;
         if (sqlite3_prepare_v2(db, room_info_query, -1, &room_stmt, NULL) == SQLITE_OK) {
             if (sqlite3_step(room_stmt) == SQLITE_ROW) {
@@ -712,8 +652,8 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
                 }
                 server_data.rooms[room_idx].creator_id = sqlite3_column_int(room_stmt, 1);
                 server_data.rooms[room_idx].time_limit = sqlite3_column_int(room_stmt, 2);
-                server_data.rooms[room_idx].room_status = 0;  // WAITING by default
-                server_data.rooms[room_idx].exam_start_time = 0;
+                server_data.rooms[room_idx].room_status = sqlite3_column_int(room_stmt, 3);  // Load từ DB
+                server_data.rooms[room_idx].exam_start_time = sqlite3_column_int64(room_stmt, 4);  // Load từ DB
                 
                 // Đếm số câu hỏi
                 char count_query[256];
@@ -780,11 +720,53 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         return;
     }
     
-    // Case 2: ENDED - Đã kết thúc
+    // Case 2: ENDED - Đã kết thúc hoặc hết giờ
     if (room->room_status == 2) {  // ENDED
-        send(socket_fd, "ERROR|Exam has ended\n", 21, 0);
+        // Check user đã submit chưa
+        char check_result[256];
+        snprintf(check_result, sizeof(check_result),
+                 "SELECT id FROM results WHERE room_id = %d AND user_id = %d",
+                 room_id, user_id);
+        
+        sqlite3_stmt *check_stmt;
+        int already_submitted = 0;
+        if (sqlite3_prepare_v2(db, check_result, -1, &check_stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+                already_submitted = 1;
+            }
+            sqlite3_finalize(check_stmt);
+        }
+        
+        if (already_submitted) {
+            send(socket_fd, "ERROR|Exam has ended and you have submitted\n", 44, 0);
+        } else {
+            send(socket_fd, "ERROR|Exam has ended\n", 21, 0);
+        }
         pthread_mutex_unlock(&server_data.lock);
         return;
+    }
+    
+    // Case 2.5: STARTED nhưng đã hết giờ (timer chưa kịp xử lý)
+    if (room->room_status == 1) {  // STARTED
+        time_t now = time(NULL);
+        long elapsed = now - room->exam_start_time;
+        long duration_seconds = room->time_limit * 60;
+        
+        if (elapsed >= duration_seconds) {
+            // Hết giờ - update status và báo lỗi
+            room->room_status = 2;  // ENDED
+            
+            // Update DB
+            char update_query[256];
+            snprintf(update_query, sizeof(update_query),
+                     "UPDATE rooms SET room_status = 2 WHERE id = %d", room_id);
+            sqlite3_exec(db, update_query, NULL, NULL, NULL);
+            
+            printf("[BEGIN_EXAM] Room %d time expired - marking as ENDED\n", room_id);
+            send(socket_fd, "ERROR|Exam time expired\n", 24, 0);
+            pthread_mutex_unlock(&server_data.lock);
+            return;
+        }
     }
     
     // Case 3: STARTED - Đang thi
@@ -794,13 +776,22 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         return;
     }
     
-    // Tính thời gian còn lại
+    // Tính thời gian còn lại và check timeout
     time_t now = time(NULL);
     long elapsed = now - room->exam_start_time;
     long duration_seconds = room->time_limit * 60;
     long remaining = duration_seconds - elapsed;
     
     if (remaining <= 0) {
+        // Hết giờ - update status
+        room->room_status = 2;  // ENDED
+        
+        char update_query[256];
+        snprintf(update_query, sizeof(update_query),
+                 "UPDATE rooms SET room_status = 2 WHERE id = %d", room_id);
+        sqlite3_exec(db, update_query, NULL, NULL, NULL);
+        
+        printf("[BEGIN_EXAM] Room %d time expired during BEGIN_EXAM\n", room_id);
         send(socket_fd, "ERROR|Exam time expired\n", 24, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -954,9 +945,50 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     long max_time = duration_minutes * 60;
     long remaining = max_time - elapsed;
     
-    // Nếu hết thời gian, auto submit
+    // Nếu hết thời gian
     if (remaining <= 0) {
-        auto_submit_on_disconnect(user_id, room_id);
+        // Check lại xem timer đã auto-submit chưa
+        char recheck_result[256];
+        snprintf(recheck_result, sizeof(recheck_result),
+                 "SELECT id FROM results WHERE room_id = %d AND user_id = %d",
+                 room_id, user_id);
+        
+        int was_auto_submitted = 0;
+        if (sqlite3_prepare_v2(db, recheck_result, -1, &stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                was_auto_submitted = 1;
+            }
+            sqlite3_finalize(stmt);
+        }
+        
+        if (!was_auto_submitted) {
+            // Timer chưa kịp auto-submit → submit ngay
+            printf("[RESUME] User %d timeout - calling auto_submit\n", user_id);
+            
+            // Unlock trước khi gọi auto_submit (tránh deadlock)
+            pthread_mutex_unlock(&server_data.lock);
+            auto_submit_on_disconnect(user_id, room_id);
+            pthread_mutex_lock(&server_data.lock);
+            
+            printf("[RESUME] Manual auto-submit completed for user %d\n", user_id);
+        }
+        
+        // Update room status nếu cần
+        int room_idx = -1;
+        for (int i = 0; i < server_data.room_count; i++) {
+            if (server_data.rooms[i].room_id == room_id) {
+                room_idx = i;
+                break;
+            }
+        }
+        if (room_idx != -1 && server_data.rooms[room_idx].room_status == 1) {
+            server_data.rooms[room_idx].room_status = 2;
+            char update_query[256];
+            snprintf(update_query, sizeof(update_query),
+                     "UPDATE rooms SET room_status = 2 WHERE id = %d", room_id);
+            sqlite3_exec(db, update_query, NULL, NULL, NULL);
+        }
+        
         send(socket_fd, "RESUME_TIME_EXPIRED\n", 20, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -978,9 +1010,10 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
         return;
     }
     
-    // Format: RESUME_EXAM_OK|remaining_seconds|q1_id:q1_text:optA:optB:optC:optD:saved_answer|...
+    // Format: RESUME_EXAM_OK|remaining_seconds|duration_minutes|q1_id:q1_text:optA:optB:optC:optD:saved_answer|...
+    // THÊM duration_minutes để client tính toán exam_start_time chính xác
     char response[8192];
-    snprintf(response, sizeof(response), "RESUME_EXAM_OK|%ld", remaining);
+    snprintf(response, sizeof(response), "RESUME_EXAM_OK|%ld|%d", remaining, duration_minutes);
     
     int question_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -1009,8 +1042,8 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[INFO] User %d resumed exam in room %d (%ld seconds remaining)\n", 
-           user_id, room_id, remaining);
+    printf("[INFO] User %d resumed exam in room %d (%ld seconds remaining, %d min duration)\n", 
+           user_id, room_id, remaining, duration_minutes);
     
     pthread_mutex_unlock(&server_data.lock);
 }

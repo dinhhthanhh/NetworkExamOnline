@@ -6,6 +6,9 @@
 // Start listening for broadcasts from server
 void broadcast_start_listener(void);
 
+// Start listening for broadcasts for specific room (waiting mode)
+void broadcast_start_listener_for_room(int room_id);
+
 // Stop listening
 void broadcast_stop_listener(void);
 

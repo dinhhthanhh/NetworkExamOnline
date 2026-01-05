@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <pthread.h>
 
 extern ClientData client;
 
@@ -17,6 +18,8 @@ static RoomCreatedCallback room_created_callback = NULL;
 // Listener state
 static guint timer_id = 0;
 static int is_listening = 0;
+static int current_waiting_room_id = -1;  // Room đang chờ broadcast
+static pthread_mutex_t broadcast_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Set socket to non-blocking mode
 static void set_nonblocking(int sockfd) {
@@ -59,8 +62,18 @@ static void handle_broadcast_message(const char *message) {
             int room_id = atoi(room_id_str);
             long start_time = atol(start_time_str);
             
-            printf("[BROADCAST] Room %d started at %ld\n", room_id, start_time);
-            room_started_callback(room_id, start_time);
+            // CHỈ xử lý nếu đúng room đang đợi
+            pthread_mutex_lock(&broadcast_mutex);
+            int waiting_room = current_waiting_room_id;
+            pthread_mutex_unlock(&broadcast_mutex);
+            
+            if (waiting_room == room_id && waiting_room != -1) {
+                printf("[BROADCAST] Room %d started at %ld - Processing\n", room_id, start_time);
+                room_started_callback(room_id, start_time);
+            } else {
+                printf("[BROADCAST] Ignored ROOM_STARTED for room %d (waiting for %d)\n", 
+                       room_id, waiting_room);
+            }
         }
     }
     // Parse ROOM_CREATED|room_id|room_name|duration
@@ -136,14 +149,33 @@ static gboolean poll_broadcasts(gpointer user_data) {
     return TRUE; // Continue timer
 }
 
-// Start broadcast listener
+// Start broadcast listener for specific room (waiting mode)
+void broadcast_start_listener_for_room(int room_id) {
+    // Stop any existing listener first
+    broadcast_stop_listener();
+    
+    pthread_mutex_lock(&broadcast_mutex);
+    current_waiting_room_id = room_id;
+    is_listening = 1;
+    pthread_mutex_unlock(&broadcast_mutex);
+    
+    // Poll every 200ms using GTK timer
+    timer_id = g_timeout_add(200, poll_broadcasts, NULL);
+    
+    printf("[BROADCAST] Listener started for room %d (polling every 200ms)\n", room_id);
+}
+
+// Start broadcast listener (general - for room list updates)
 void broadcast_start_listener(void) {
     if (is_listening) {
         printf("[BROADCAST] Listener already running\n");
         return;
     }
     
+    pthread_mutex_lock(&broadcast_mutex);
+    current_waiting_room_id = -1;  // No specific room
     is_listening = 1;
+    pthread_mutex_unlock(&broadcast_mutex);
     
     // Poll every 200ms using GTK timer
     timer_id = g_timeout_add(200, poll_broadcasts, NULL);
@@ -157,7 +189,10 @@ void broadcast_stop_listener(void) {
         return;
     }
     
+    pthread_mutex_lock(&broadcast_mutex);
     is_listening = 0;
+    current_waiting_room_id = -1;  // Clear waiting room
+    pthread_mutex_unlock(&broadcast_mutex);
     
     if (timer_id > 0) {
         g_source_remove(timer_id);

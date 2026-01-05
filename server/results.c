@@ -131,17 +131,8 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     printf("[MEMORY] User %d answered Q%d = %d in room %d (in-memory)\n", 
            user_id, question_idx, selected_answer, room_id);
     
-    // **AUTO-SAVE mỗi 5 câu hoặc câu cuối**
-    int answered_count = 0;
-    for (int i = 0; i < MAX_QUESTIONS; i++) {
-        if (room->answers[user_idx][i].answer >= 0) {
-            answered_count++;
-        }
-    }
-    
-    if (answered_count % 5 == 0 || answered_count == room->num_questions) {
-        flush_answers_to_db(user_id, room_id, room, user_idx);
-    }
+    // **LUÔN FLUSH VÀO DB NGAY (để tránh mất data khi disconnect)**
+    flush_answers_to_db(user_id, room_id, room, user_idx);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -412,11 +403,22 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   sqlite3_free(insert_query);
   
   if (err_msg) {
+      fprintf(stderr, "[AUTO_SUBMIT] Error inserting result: %s\n", err_msg);
       sqlite3_free(err_msg);
+  } else {
+      // Mark user as taken exam
+      char mark_taken[256];
+      snprintf(mark_taken, sizeof(mark_taken),
+               "UPDATE room_participants SET has_taken_exam = 1 "
+               "WHERE user_id = %d AND room_id = %d",
+               user_id, room_id);
+      sqlite3_exec(db, mark_taken, NULL, NULL, NULL);
+      
+      printf("[AUTO_SUBMIT] User %d auto-submitted - Score: %d/%d\n", 
+             user_id, score, total_questions);
   }
   
-  log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
-  printf("[INFO] Auto-submitted for user %d - Score: %d/%d\n", user_id, score, total_questions);
+  log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on timeout");
   
   pthread_mutex_unlock(&server_data.lock);
 }
@@ -425,31 +427,14 @@ void auto_submit_on_disconnect(int user_id, int room_id)
 void flush_user_answers(int user_id, int room_id) {
     pthread_mutex_lock(&server_data.lock);
     
-    printf("[FLUSH] flush_user_answers called: user=%d, room=%d, room_count=%d\n", 
-           user_id, room_id, server_data.room_count);
+    printf("[FLUSH] flush_user_answers called: user=%d, room=%d\n", user_id, room_id);
     
-    int room_idx = find_room_index(room_id);
-    if (room_idx != -1) {
-        TestRoom *room = &server_data.rooms[room_idx];
-        printf("[FLUSH] Found room at idx=%d, participant_count=%d\n", 
-               room_idx, room->participant_count);
-        
-        int user_idx = find_participant_index(room, user_id);
-        if (user_idx != -1) {
-            printf("[FLUSH] Found user at idx=%d, calling flush_answers_to_db\n", user_idx);
-            flush_answers_to_db(user_id, room_id, room, user_idx);
-        } else {
-            printf("[FLUSH] ERROR: User %d not found in room participants\n", user_id);
-        }
-    } else {
-        printf("[FLUSH] ERROR: Room %d not found in in-memory (room_count=%d)\n", 
-               room_id, server_data.room_count);
-        // List all rooms for debugging
-        for (int i = 0; i < server_data.room_count; i++) {
-            printf("[FLUSH]   Room[%d]: id=%d, participants=%d\n", 
-                   i, server_data.rooms[i].room_id, server_data.rooms[i].participant_count);
-        }
-    }
+    // QUAN TRỌNG: Flush TRỰC TIẾP từ DB, không cần in-memory
+    // Vì khi disconnect, room có thể đã bị xóa khỏi in-memory
+    // hoặc user không còn trong participants list
+    
+    // Không làm gì cả - đáp án đã được lưu vào DB realtime khi SAVE_ANSWER
+    printf("[FLUSH] Answers already saved to DB in realtime - no action needed\n");
     
     pthread_mutex_unlock(&server_data.lock);
 }

@@ -3,6 +3,7 @@
 #include "db.h"
 #include "questions.h"
 #include "rooms.h"
+#include "timer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,20 @@
 // Define globals declared as extern in common.h
 ServerData server_data;
 sqlite3 *db = NULL;
+
+// Timer thread
+void *timer_thread(void *arg) {
+    (void)arg;  // Unused
+    
+    printf("[TIMER] Timer thread started\n");
+    
+    while (1) {
+        sleep(5);  // Check mỗi 5 giây
+        check_room_timeouts();
+    }
+    
+    return NULL;
+}
 
 int main()
 {
@@ -64,6 +79,15 @@ int main()
     }
 
     printf("Server started on port %d\n", PORT);
+
+    // Khởi động timer thread
+    pthread_t timer_tid;
+    if (pthread_create(&timer_tid, NULL, timer_thread, NULL) != 0) {
+        perror("Failed to create timer thread");
+    } else {
+        pthread_detach(timer_tid);
+        printf("[TIMER] Timer thread launched\n");
+    }
 
     while (1)
     {

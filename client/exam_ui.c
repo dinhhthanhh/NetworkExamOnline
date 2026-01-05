@@ -280,6 +280,26 @@ void create_exam_page(int room_id) {
     
     printf("[DEBUG] BEGIN_EXAM response (%zd bytes): %s\n", n, buffer);
     
+    // ===== XỬ LÝ ERROR RESPONSES =====
+    if (n > 0 && strncmp(buffer, "ERROR", 5) == 0) {
+        char *error_msg = strchr(buffer, '|');
+        const char *display_msg = error_msg ? error_msg + 1 : "Unknown error";
+        
+        GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                                         GTK_DIALOG_MODAL,
+                                                         GTK_MESSAGE_ERROR,
+                                                         GTK_BUTTONS_OK,
+                                                         "❌ Cannot join exam");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
+                                                 "%s", display_msg);
+        gtk_dialog_run(GTK_DIALOG(error_dialog));
+        gtk_widget_destroy(error_dialog);
+        
+        // Redirect về room list
+        create_test_mode_screen();
+        return;
+    }
+    
     // ===== XỬ LÝ EXAM_WAITING (LOGIC MỚI) =====
     if (n > 0 && strncmp(buffer, "EXAM_WAITING", 12) == 0) {
         printf("[EXAM_UI] Entering waiting mode for room %d\n", room_id);
@@ -289,8 +309,8 @@ void create_exam_page(int room_id) {
         // Register callback for ROOM_STARTED broadcast
         broadcast_on_room_started(on_room_started_broadcast);
         
-        // Start listening for broadcasts
-        broadcast_start_listener();
+        // Start listening for broadcasts for THIS SPECIFIC ROOM
+        broadcast_start_listener_for_room(room_id);
         
         // Show waiting dialog
         waiting_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -310,6 +330,9 @@ void create_exam_page(int room_id) {
             broadcast_stop_listener();
             waiting_room_id = 0;
             printf("[EXAM_UI] User cancelled waiting\n");
+            
+            // Redirect về room list
+            create_test_mode_screen();
         }
         
         return;
@@ -602,8 +625,8 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     
     printf("[DEBUG] Resume data: %s\n", resume_data);
     
-    // Parse: RESUME_EXAM_OK|remaining_seconds|q1_id:text:A:B:C:D:saved_answer|...
-    // Sử dụng strstr thay vì strtok để tránh modify string gốc
+    // Parse: RESUME_EXAM_OK|remaining_seconds|duration_minutes|q1_id:text:A:B:C:D:saved_answer|...
+    // THÊM duration_minutes để tính exam_start_time chính xác
     
     // Tìm remaining_seconds
     const char *ptr = strstr(resume_data, "RESUME_EXAM_OK|");
@@ -615,7 +638,16 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     ptr += 15; // Skip "RESUME_EXAM_OK|"
     long remaining_seconds = atol(ptr);
     
-    // Tìm vị trí bắt đầu questions (sau remaining_seconds)
+    // Parse duration_minutes (field mới)
+    ptr = strchr(ptr, '|');
+    if (!ptr) {
+        printf("[ERROR] No duration field\n");
+        return;
+    }
+    ptr++; // Skip '|'
+    int duration_minutes = atoi(ptr);
+    
+    // Tìm vị trí bắt đầu questions (sau duration_minutes)
     ptr = strchr(ptr, '|');
     if (!ptr) {
         printf("[ERROR] No questions data\n");
@@ -623,11 +655,18 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     }
     ptr++; // Skip '|'
     
-    printf("[DEBUG] Remaining: %ld seconds\n", remaining_seconds);
+    printf("[DEBUG] Remaining: %ld seconds, Duration: %d minutes\n", remaining_seconds, duration_minutes);
     
-    // Set timer
-    exam_start_time = time(NULL);
-    exam_duration = (remaining_seconds / 60) + 1;
+    // Set exam_duration từ server (CHÍNH XÁC)
+    exam_duration = duration_minutes;
+    
+    // Tính exam_start_time ngược lại từ remaining và duration
+    time_t now = time(NULL);
+    long elapsed = (duration_minutes * 60) - remaining_seconds;
+    exam_start_time = now - elapsed;
+    
+    printf("[DEBUG] Calculated start_time: %ld (now: %ld, elapsed: %ld)\n", 
+           exam_start_time, now, elapsed);
     
     // Đếm số câu hỏi bằng cách đếm dấu '|'
     const char *count_ptr = ptr;

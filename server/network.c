@@ -97,13 +97,6 @@ void *handle_client(void *arg)
       int room_id = atoi(strtok(NULL, "|"));
       join_test_room(socket_fd, user_id, room_id);
     }
-    // MAX_ATTEMPTS logic removed - users can only take exam once
-    // else if (strcmp(cmd, "SET_MAX_ATTEMPTS") == 0)
-    // {
-    //   int room_id = atoi(strtok(NULL, "|"));
-    //   int max_attempts = atoi(strtok(NULL, "|"));
-    //   set_room_max_attempts(socket_fd, user_id, room_id, max_attempts);
-    // }
     else if (strcmp(cmd, "LIST_MY_ROOMS") == 0)
     {
       list_my_rooms(socket_fd, user_id);
@@ -125,18 +118,6 @@ void *handle_client(void *arg)
       current_room_id = room_id; // Track room
       handle_resume_exam(socket_fd, user_id, room_id);
     }
-    // CLOSE_ROOM removed - rooms are closed automatically after exam ends
-    // else if (strcmp(cmd, "CLOSE_ROOM") == 0)
-    // {
-    //   int room_id = atoi(strtok(NULL, "|"));
-    //   close_room(socket_fd, user_id, room_id);
-    // }
-    // else if (strcmp(cmd, "GET_QUESTION") == 0)
-    // {
-    //   int room_id = atoi(strtok(NULL, "|"));
-    //   int q_num = atoi(strtok(NULL, "|"));
-    //   get_question(socket_fd, room_id, q_num);
-    // }
     else if (strstr(buffer, "GET_USER_ROOMS")) 
     {
       char *user_id_str = buffer + 15; // skip "GET_USER_ROOMS|"
@@ -199,10 +180,6 @@ void *handle_client(void *arg)
     {
       get_category_stats(socket_fd, user_id);
     }
-    else if (strcmp(cmd, "DIFFICULTY_STATS") == 0)
-    {
-      get_difficulty_stats(socket_fd, user_id);
-    }
     else if (strcmp(cmd, "IMPORT_CSV") == 0)
     {
       char *data = buffer + 11; // skip "IMPORT_CSV|"
@@ -211,10 +188,6 @@ void *handle_client(void *arg)
     else if (strcmp(cmd, "ADMIN_DASHBOARD") == 0)
     {
       get_admin_dashboard(socket_fd, user_id);
-    }
-    else if (strcmp(cmd, "ADMIN_USERS") == 0)
-    {
-      manage_users(socket_fd, user_id);
     }
     else if (strcmp(cmd, "ADMIN_QUESTIONS") == 0)
     {

@@ -431,7 +431,7 @@ void show_import_exam_csv_dialog(GtkWidget *widget, gpointer data) {
             // Add small delay before refresh
             g_usleep(100000); // 100ms
         } else {
-            char error_msg[512];
+            char error_msg[1024];
             snprintf(error_msg, sizeof(error_msg), "Failed to import CSV: %s", 
                     (resp_n > 0) ? buffer : "No response");
             show_error_dialog(error_msg);

@@ -6,6 +6,7 @@
 #include "stats.h"
 #include "admin.h"
 #include "timer.h"
+#include "practice.h"
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -88,9 +89,16 @@ void *handle_client(void *arg)
     {
       char *room_name = strtok(NULL, "|");
       char *time_str = strtok(NULL, "|");
+      char *easy_str = strtok(NULL, "|");
+      char *medium_str = strtok(NULL, "|");
+      char *hard_str = strtok(NULL, "|");
+      
       int time_limit = time_str ? atoi(time_str) : 30;
-      // num_q removed - questions will be added later via ADD_QUESTION
-      create_test_room(socket_fd, user_id, room_name, 0, time_limit);
+      int easy_count = easy_str ? atoi(easy_str) : 0;
+      int medium_count = medium_str ? atoi(medium_str) : 0;
+      int hard_count = hard_str ? atoi(hard_str) : 0;
+      
+      create_test_room(socket_fd, user_id, room_name, 0, time_limit, easy_count, medium_count, hard_count);
     }
     else if (strcmp(cmd, "JOIN_ROOM") == 0)
     {
@@ -131,6 +139,16 @@ void *handle_client(void *arg)
     //   int room_id = atoi(strtok(NULL, "|"));
     //   close_room(socket_fd, user_id, room_id);
     // }
+    else if (strcmp(cmd, "DELETE_ROOM") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      delete_room(socket_fd, user_id, room_id);
+    }
+    else if (strcmp(cmd, "GET_ROOM_MEMBERS") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      get_room_members(socket_fd, user_id, room_id);
+    }
     // else if (strcmp(cmd, "GET_QUESTION") == 0)
     // {
     //   int room_id = atoi(strtok(NULL, "|"));
@@ -142,6 +160,12 @@ void *handle_client(void *arg)
       char *user_id_str = buffer + 15; // skip "GET_USER_ROOMS|"
       int user_id = atoi(user_id_str);
       handle_get_user_rooms(socket_fd, user_id);
+    }
+    else if (strstr(buffer, "GET_PRACTICE_ROOMS"))
+    {
+      char *user_id_str = buffer + 19; // skip "GET_PRACTICE_ROOMS|"
+      int user_id = atoi(user_id_str);
+      get_user_practice_rooms(socket_fd, user_id);
     }
     else if (strstr(buffer, "ADD_QUESTION")) {
     char *data = buffer + 13; // skip "ADD_QUESTION|"
@@ -239,6 +263,131 @@ void *handle_client(void *arg)
       check_room_timeouts();
       char response[] = "TIMERS_CHECKED\n";
       send(socket_fd, response, strlen(response), 0);
+    }
+    // Practice commands
+    else if (strcmp(cmd, "CREATE_PRACTICE") == 0)
+    {
+      char *room_name = strtok(NULL, "|");
+      char *time_str = strtok(NULL, "|");
+      char *show_str = strtok(NULL, "|");
+      int time_limit = time_str ? atoi(time_str) : 0;
+      int show_answers = show_str ? atoi(show_str) : 0;
+      create_practice_room(socket_fd, user_id, room_name, time_limit, show_answers);
+    }
+    else if (strcmp(cmd, "LIST_PRACTICE") == 0)
+    {
+      list_practice_rooms(socket_fd);
+    }
+    else if (strcmp(cmd, "JOIN_PRACTICE") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      join_practice_room(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "ADD_PRACTICE_QUESTION") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      int question_id = atoi(strtok(NULL, "|"));
+      add_question_to_practice(socket_fd, user_id, practice_id, question_id);
+    }
+    else if (strcmp(cmd, "CLOSE_PRACTICE") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      close_practice_room(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "OPEN_PRACTICE") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      open_practice_room(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "PRACTICE_PARTICIPANTS") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      get_practice_participants(socket_fd, user_id, practice_id);
+    }    else if (strcmp(cmd, "CREATE_PRACTICE_QUESTION") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      char *question_data = strtok(NULL, "\n");
+      create_practice_question(socket_fd, user_id, practice_id, question_data);
+    }
+    else if (strcmp(cmd, "IMPORT_PRACTICE_CSV") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      char *filename = strtok(NULL, "\n");
+      import_practice_csv(socket_fd, user_id, practice_id, filename);
+    }    else if (strcmp(cmd, "SUBMIT_PRACTICE_ANSWER") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      int question_num = atoi(strtok(NULL, "|"));
+      int answer = atoi(strtok(NULL, "|"));
+      submit_practice_answer(socket_fd, user_id, practice_id, question_num, answer);
+    }
+    else if (strcmp(cmd, "FINISH_PRACTICE") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      finish_practice_session(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "VIEW_PRACTICE_RESULTS") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      view_practice_results(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "RESTART_PRACTICE") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      restart_practice(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "CHANGE_PASSWORD") == 0)
+    {
+      char *old_pass = strtok(NULL, "|");
+      char *new_pass = strtok(NULL, "|");
+      change_password(socket_fd, user_id, old_pass, new_pass);
+    }
+    else if (strcmp(cmd, "DELETE_PRACTICE") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      delete_practice_room(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "GET_PRACTICE_QUESTIONS") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      get_practice_questions(socket_fd, user_id, practice_id);
+    }
+    else if (strcmp(cmd, "UPDATE_PRACTICE_QUESTION") == 0)
+    {
+      int practice_id = atoi(strtok(NULL, "|"));
+      int question_id = atoi(strtok(NULL, "|"));
+      char *new_data = strtok(NULL, "\n"); // Rest of buffer
+      update_practice_question(socket_fd, user_id, practice_id, question_id, new_data);
+    }
+    else if (strcmp(cmd, "GET_EXAM_STUDENTS") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      get_exam_students_status(socket_fd, user_id, room_id);
+    }
+    else if (strcmp(cmd, "GET_ROOM_QUESTIONS") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      get_room_questions(socket_fd, user_id, room_id);
+    }
+    else if (strcmp(cmd, "GET_QUESTION_DETAIL") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      int question_id = atoi(strtok(NULL, "|"));
+      get_question_detail(socket_fd, user_id, room_id, question_id);
+    }
+    else if (strcmp(cmd, "UPDATE_EXAM_QUESTION") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      int question_id = atoi(strtok(NULL, "|"));
+      char *new_data = strtok(NULL, "\n"); // Rest of buffer
+      update_exam_question(socket_fd, user_id, room_id, question_id, new_data);
+    }
+    else if (strcmp(cmd, "UPDATE_ROOM_QUESTION") == 0)
+    {
+      int room_id = atoi(strtok(NULL, "|"));
+      int question_id = atoi(strtok(NULL, "|"));
+      char *new_data = strtok(NULL, "\n"); // Rest of buffer
+      update_room_question(socket_fd, user_id, room_id, question_id, new_data);
     }
   }
 

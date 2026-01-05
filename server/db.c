@@ -1,4 +1,5 @@
 #include "db.h"
+#include "practice.h"
 
 extern sqlite3 *db;
 extern ServerData server_data;
@@ -37,8 +38,9 @@ void init_database() {
                            "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,"
                            "FOREIGN KEY(user_id) REFERENCES users(id));";
 
+  // Exam questions table - linked to rooms
   const char *sql_questions = 
-                            "CREATE TABLE IF NOT EXISTS questions("
+                            "CREATE TABLE IF NOT EXISTS exam_questions("
                             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                             "room_id INTEGER NOT NULL,"
                             "question_text TEXT NOT NULL,"
@@ -51,6 +53,40 @@ void init_database() {
                             "category TEXT DEFAULT 'General',"
                             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                             "FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE CASCADE"
+                            ");";
+  
+  // Practice questions table - separate from exam questions
+  const char *sql_practice_questions = 
+                            "CREATE TABLE IF NOT EXISTS practice_questions("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "practice_id INTEGER NOT NULL,"
+                            "question_text TEXT NOT NULL,"
+                            "option_a TEXT NOT NULL,"
+                            "option_b TEXT NOT NULL,"
+                            "option_c TEXT NOT NULL,"
+                            "option_d TEXT NOT NULL,"
+                            "correct_answer INTEGER NOT NULL,"  // 0=A, 1=B, 2=C, 3=D
+                            "difficulty TEXT DEFAULT 'Easy',"
+                            "category TEXT DEFAULT 'General',"
+                            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                            "FOREIGN KEY(practice_id) REFERENCES practice_rooms(id) ON DELETE CASCADE"
+                            ");";
+  
+  // Backward compatibility: Keep old questions table but rename if exists
+  // This is for migration purpose only
+  const char *sql_migrate_questions = 
+                            "CREATE TABLE IF NOT EXISTS questions_backup("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "room_id INTEGER,"
+                            "question_text TEXT,"
+                            "option_a TEXT,"
+                            "option_b TEXT,"
+                            "option_c TEXT,"
+                            "option_d TEXT,"
+                            "correct_answer INTEGER,"
+                            "difficulty TEXT,"
+                            "category TEXT,"
+                            "created_at DATETIME"
                             ");";
   const char *sql_rooms = 
                             "CREATE TABLE IF NOT EXISTS rooms("
@@ -77,8 +113,8 @@ void init_database() {
                             "UNIQUE(room_id, user_id)"  // Một user chỉ join room một lần
                             ");";
   
-  const char *sql_user_answers = 
-                            "CREATE TABLE IF NOT EXISTS user_answers("
+  const char *sql_exam_answers = 
+                            "CREATE TABLE IF NOT EXISTS exam_answers("
                             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                             "user_id INTEGER NOT NULL,"
                             "room_id INTEGER NOT NULL,"
@@ -87,32 +123,32 @@ void init_database() {
                             "answered_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                             "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,"
                             "FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE CASCADE,"
-                            "FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE,"
+                            "FOREIGN KEY(question_id) REFERENCES exam_questions(id) ON DELETE CASCADE,"
                             "UNIQUE(user_id, room_id, question_id)"  // Mỗi user chỉ trả lời mỗi câu 1 lần
-                            ");";
-
-  const char *sql_room_participants = 
-                            "CREATE TABLE IF NOT EXISTS room_participants("
-                            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                            "user_id INTEGER NOT NULL,"
-                            "room_id INTEGER NOT NULL,"
-                            "has_taken_exam INTEGER DEFAULT 0,"  // 0: chưa thi, 1: đã thi
-                            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                            "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,"
-                            "FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE CASCADE,"
-                            "UNIQUE(user_id, room_id)"  // Mỗi user chỉ có 1 record cho mỗi room
                             ");";
 
   sqlite3_exec(db, sql_users, 0, 0, &err_msg);
   sqlite3_exec(db, sql_results, 0, 0, &err_msg);
   sqlite3_exec(db, sql_activity_log, 0, 0, &err_msg);
   sqlite3_exec(db, sql_questions, 0, 0, &err_msg);
+  sqlite3_exec(db, sql_practice_questions, 0, 0, &err_msg);
+  sqlite3_exec(db, sql_migrate_questions, 0, 0, &err_msg);
   sqlite3_exec(db, sql_rooms, 0, 0, &err_msg);
   sqlite3_exec(db, sql_participants, 0, 0, &err_msg);
-  sqlite3_exec(db, sql_user_answers, 0, 0, &err_msg);
-  sqlite3_exec(db, sql_room_participants, 0, 0, &err_msg);
+  sqlite3_exec(db, sql_exam_answers, 0, 0, &err_msg);
 
-  // Thêm cột room_status vào rooms nếu chưa có (0=WAITING, 1=STARTED, 2=ENDED)
+  // Initialize practice tables
+  init_practice_tables();
+  
+  // Migration note: Move data from old 'questions' table to new structure
+  // Old questions table is now split into:
+  // - exam_questions: for exam rooms (linked to rooms.id)
+  // - practice_questions: for practice rooms (linked to practice_rooms.id)
+  // Run migration script if needed to transfer existing data
+  
+  printf("Database initialized successfully\n");
+  printf("Tables created: exam_questions (for exams), practice_questions (for practice)\n");
+  printf("Default admin account: username='admin', password='admin123'\n");
   const char *sql_alter_room_status = 
     "ALTER TABLE rooms ADD COLUMN room_status INTEGER DEFAULT 0;";
   sqlite3_exec(db, sql_alter_room_status, 0, 0, &err_msg);
@@ -125,6 +161,15 @@ void init_database() {
   const char *sql_alter_exam_start = 
     "ALTER TABLE rooms ADD COLUMN exam_start_time INTEGER DEFAULT 0;";
   sqlite3_exec(db, sql_alter_exam_start, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột has_taken_exam vào participants
+  const char *sql_alter_participants = 
+    "ALTER TABLE participants ADD COLUMN has_taken_exam INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_participants, 0, 0, &err_msg);
   if (err_msg) {
     sqlite3_free(err_msg);
     err_msg = NULL;

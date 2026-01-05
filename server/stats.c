@@ -86,10 +86,10 @@ void get_category_stats(int socket_fd, int user_id)
   sqlite3_stmt *stmt;
 
   snprintf(query, sizeof(query),
-           "SELECT q.category, COUNT(DISTINCT r.id) as tests, "
-           "SUM(CASE WHEN r.score > 0 THEN 1 ELSE 0 END) as passed "
-           "FROM results r JOIN questions q ON r.room_id = q.id "
-           "WHERE r.user_id = %d GROUP BY q.category;",
+           "SELECT 'All Categories' as category, COUNT(DISTINCT r.id) as tests, "
+           "SUM(CASE WHEN CAST(r.score AS FLOAT)/r.total_questions >= 0.5 THEN 1 ELSE 0 END) as passed "
+           "FROM results r "
+           "WHERE r.user_id = %d;",
            user_id);
 
   pthread_mutex_lock(&server_data.lock);
@@ -124,10 +124,10 @@ void get_difficulty_stats(int socket_fd, int user_id)
   sqlite3_stmt *stmt;
 
   snprintf(query, sizeof(query),
-           "SELECT q.difficulty, COUNT(DISTINCT r.id) as tests, "
+           "SELECT 'All Difficulties' as difficulty, COUNT(DISTINCT r.id) as tests, "
            "AVG(CAST(r.score AS FLOAT)/r.total_questions) as pass_rate "
-           "FROM results r JOIN questions q ON r.room_id = q.id "
-           "WHERE r.user_id = %d GROUP BY q.difficulty;",
+           "FROM results r "
+           "WHERE r.user_id = %d;",
            user_id);
 
   pthread_mutex_lock(&server_data.lock);

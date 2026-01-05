@@ -109,11 +109,11 @@ void check_room_timeouts(void)
               }
 
               if (!already_submitted) {
-                // Tính điểm từ user_answers
+                // Tính điểm từ exam_answers
                 char score_query[512];
                 snprintf(score_query, sizeof(score_query),
-                         "SELECT COUNT(*) FROM user_answers ua "
-                         "JOIN questions q ON ua.question_id = q.id "
+                         "SELECT COUNT(*) FROM exam_answers ua "
+                         "JOIN exam_questions q ON ua.question_id = q.id "
                          "WHERE ua.user_id = %d AND ua.room_id = %d "
                          "AND ua.selected_answer = q.correct_answer",
                          user_id, i);
@@ -130,7 +130,7 @@ void check_room_timeouts(void)
                 // Đếm tổng số câu hỏi
                 char count_query[256];
                 snprintf(count_query, sizeof(count_query),
-                         "SELECT COUNT(*) FROM questions WHERE room_id = %d", i);
+                         "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", i);
 
                 int total_questions = 0;
                 sqlite3_stmt *count_stmt;

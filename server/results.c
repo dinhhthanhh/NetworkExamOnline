@@ -33,7 +33,7 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
     // Xóa các đáp án cũ trong DB
     char delete_query[256];
     snprintf(delete_query, sizeof(delete_query),
-             "DELETE FROM user_answers WHERE user_id = %d AND room_id = %d",
+             "DELETE FROM exam_answers WHERE user_id = %d AND room_id = %d",
              user_id, room_id);
     sqlite3_exec(db, delete_query, NULL, NULL, NULL);
     
@@ -46,7 +46,7 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
             // Lấy question_id thực tế từ DB
             char get_qid_query[256];
             snprintf(get_qid_query, sizeof(get_qid_query),
-                     "SELECT id FROM questions WHERE room_id = %d LIMIT 1 OFFSET %d",
+                     "SELECT id FROM exam_questions WHERE room_id = %d LIMIT 1 OFFSET %d",
                      room_id, q);
             
             sqlite3_stmt *stmt;
@@ -56,7 +56,7 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
                     
                     char insert_query[512];
                     snprintf(insert_query, sizeof(insert_query),
-                             "INSERT INTO user_answers (user_id, room_id, question_id, selected_answer, answered_at) "
+                             "INSERT INTO exam_answers (user_id, room_id, question_id, selected_answer, answered_at) "
                              "VALUES (%d, %d, %d, %d, %ld)",
                              user_id, room_id, question_id, ans->answer, ans->submit_time);
                     sqlite3_exec(db, insert_query, NULL, NULL, NULL);
@@ -103,7 +103,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm question index (question_id → index trong mảng)
     char get_q_index[256];
     snprintf(get_q_index, sizeof(get_q_index),
-             "SELECT COUNT(*) - 1 FROM questions WHERE room_id = %d AND id <= %d",
+             "SELECT COUNT(*) - 1 FROM exam_questions WHERE room_id = %d AND id <= %d",
              room_id, question_id);
     
     sqlite3_stmt *stmt;
@@ -236,11 +236,11 @@ void submit_test(int socket_fd, int user_id, int room_id)
       elapsed = max_time; // Cap ở max time
   }
   
-  // Tính điểm: JOIN user_answers với questions để check correct_answer
+  // Tính điểm: JOIN exam_answers với exam_questions để check correct_answer
   char score_query[512];
   snprintf(score_query, sizeof(score_query),
-           "SELECT COUNT(*) FROM user_answers ua "
-           "JOIN questions q ON ua.question_id = q.id "
+           "SELECT COUNT(*) FROM exam_answers ua "
+           "JOIN exam_questions q ON ua.question_id = q.id "
            "WHERE ua.user_id = %d AND ua.room_id = %d "
            "AND ua.selected_answer = q.correct_answer",
            user_id, room_id);
@@ -256,7 +256,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
   // Đếm tổng số câu hỏi
   char count_query[256];
   snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+           "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", room_id);
   
   int total_questions = 0;
   if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
@@ -283,7 +283,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
   // ===== CẬP NHẬT HAS_TAKEN_EXAM = 1 (LOGIC MỚI) =====
   char update_taken_query[256];
   snprintf(update_taken_query, sizeof(update_taken_query),
-           "UPDATE room_participants SET has_taken_exam = 1 "
+           "UPDATE participants SET has_taken_exam = 1 "
            "WHERE user_id = %d AND room_id = %d",
            user_id, room_id);
   sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
@@ -374,8 +374,8 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   // Tính điểm
   char score_query[512];
   snprintf(score_query, sizeof(score_query),
-           "SELECT COUNT(*) FROM user_answers ua "
-           "JOIN questions q ON ua.question_id = q.id "
+           "SELECT COUNT(*) FROM exam_answers ua "
+           "JOIN exam_questions q ON ua.question_id = q.id "
            "WHERE ua.user_id = %d AND ua.room_id = %d "
            "AND ua.selected_answer = q.correct_answer",
            user_id, room_id);
@@ -391,7 +391,7 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   // Đếm tổng câu hỏi
   char count_query[256];
   snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+           "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", room_id);
   
   int total_questions = 0;
   if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {

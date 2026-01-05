@@ -3,6 +3,7 @@
 #include "db.h"
 #include "questions.h"
 #include "rooms.h"
+#include "practice.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,7 @@ int main()
     init_database();
     load_users_from_db();  // Load users vào in-memory structure
     load_rooms_from_db();  // Load rooms vào in-memory structure
+    load_practice_rooms_from_db();  // Load practice rooms
     // load_sample_questions();
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);

@@ -352,7 +352,7 @@ void create_stats_screen()
             }
             
             if (f == 6) {
-                int result_id = atoi(fields[0]);
+                // int result_id = atoi(fields[0]); // Not used
                 char *room_name = fields[1];
                 int score = atoi(fields[2]);
                 int total = atoi(fields[3]);
@@ -367,7 +367,7 @@ void create_stats_screen()
                 gtk_widget_set_margin_bottom(test_row, 5);
                 
                 // Icon và room name
-                char room_text[256];
+                char room_text[512]; // Increased buffer size
                 snprintf(room_text, sizeof(room_text), "📚 %s", room_name);
                 GtkWidget *room_label = gtk_label_new(room_text);
                 gtk_label_set_xalign(GTK_LABEL(room_label), 0.0);
@@ -389,7 +389,7 @@ void create_stats_screen()
                 gtk_widget_set_size_request(time_label, 120, -1);
                 
                 // Date
-                char date_text[128];
+                char date_text[512]; // Increased buffer size
                 snprintf(date_text, sizeof(date_text), "📅 %s", completed);
                 GtkWidget *date_label = gtk_label_new(date_text);
                 

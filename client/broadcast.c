@@ -91,6 +91,11 @@ static gboolean poll_broadcasts(gpointer user_data) {
         return FALSE; // Stop timer
     }
     
+    // Check if socket is valid
+    if (client.socket_fd <= 0) {
+        return TRUE; // Continue timer but skip this iteration
+    }
+    
     // Set socket to non-blocking temporarily
     set_nonblocking(client.socket_fd);
     

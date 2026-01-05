@@ -10,6 +10,8 @@ void style_button(GtkWidget *button, const char *hex_color);
 // Dialog helpers
 void show_success_dialog(const char *message);
 void show_error_dialog(const char *message);
+void show_info_dialog(const char *message);
+void show_connection_lost_dialog(void);
 
 // CSS setup
 void setup_leaderboard_css(void);

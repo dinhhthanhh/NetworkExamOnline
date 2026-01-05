@@ -64,14 +64,45 @@ typedef struct
   int total_correct_answers;
 } User;
 
+// Practice room structure
+typedef struct {
+    int practice_id;
+    int creator_id;
+    char room_name[100];
+    int time_limit;              // 0 means no time limit
+    int show_answers;            // 1 = show correct/incorrect immediately, 0 = only mark as answered
+    int is_open;                 // 1 = open, 0 = closed
+    int num_questions;
+    int question_ids[MAX_QUESTIONS];
+    time_t created_time;
+} PracticeRoom;
+
+// Practice session for a user
+typedef struct {
+    int session_id;
+    int practice_id;
+    int user_id;
+    int answers[MAX_QUESTIONS];  // User's answers (-1 = not answered)
+    int is_correct[MAX_QUESTIONS]; // Only filled if show_answers=1
+    time_t start_time;
+    time_t end_time;             // 0 if not finished
+    int score;
+    int total_questions;
+    int is_active;               // 1 = currently practicing, 0 = finished
+} PracticeSession;
+
 typedef struct
 {
   User users[MAX_CLIENTS];
   TestRoom rooms[MAX_ROOMS];
   Question questions[MAX_QUESTIONS];
+  PracticeRoom practice_rooms[MAX_ROOMS];
+  PracticeSession practice_sessions[MAX_CLIENTS * MAX_ROOMS];
   int user_count;
   int room_count;
   int question_count;
+  int practice_room_count;
+  int practice_session_count;
   sqlite3 *db;
   pthread_mutex_t lock;
 } ServerData;

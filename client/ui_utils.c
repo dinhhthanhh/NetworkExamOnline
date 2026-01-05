@@ -71,6 +71,34 @@ void show_error_dialog(const char *message)
     gtk_widget_destroy(dialog);
 }
 
+void show_info_dialog(const char *message)
+{
+    GtkWidget *dialog = gtk_message_dialog_new(NULL,
+                                               GTK_DIALOG_MODAL,
+                                               GTK_MESSAGE_INFO,
+                                               GTK_BUTTONS_OK,
+                                               "%s", message);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+void show_connection_lost_dialog(void)
+{
+    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                               GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                               GTK_MESSAGE_ERROR,
+                                               GTK_BUTTONS_OK,
+                                               "Connection Lost");
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+        "The connection to the server has been lost.\n"
+        "Please restart the application and try again.");
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    
+    // Close the application
+    gtk_main_quit();
+}
+
 void setup_leaderboard_css() {
     static gboolean css_loaded = FALSE;
     if (css_loaded) return;

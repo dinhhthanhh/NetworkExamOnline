@@ -10,7 +10,7 @@ extern sqlite3 *db;
 // Forward declaration
 static void load_room_answers_internal(int room_id, int user_id);
 
-void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q, int time_limit) {
+void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q, int time_limit, int easy_count, int medium_count, int hard_count) {
   pthread_mutex_lock(&server_data.lock);
 
   // Kiểm tra role - chỉ admin mới được tạo room
@@ -48,10 +48,24 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
     return;
   }
   
-  // num_q không còn cần validate - questions sẽ được add sau via ADD_QUESTION
   // time_limit validation
   if (time_limit <= 0 || time_limit > 180) {
     char response[] = "CREATE_ROOM_FAIL|Invalid time limit (1-180 minutes)\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  // Validate question counts
+  int total_questions = easy_count + medium_count + hard_count;
+  if (total_questions <= 0) {
+    char response[] = "CREATE_ROOM_FAIL|Must select at least 1 question\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  if (total_questions > 50) {
+    char response[] = "CREATE_ROOM_FAIL|Too many questions (max 50)\n";
     send(socket_fd, response, strlen(response), 0);
     pthread_mutex_unlock(&server_data.lock);
     return;
@@ -113,6 +127,85 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   int room_id = sqlite3_last_insert_rowid(db);
   sqlite3_finalize(stmt);
 
+  // ===== RANDOM QUESTION SELECTION =====
+  
+  int selected_count = 0;
+  
+  // Select easy questions
+  if (easy_count > 0) {
+    const char *sql_easy = "SELECT id FROM exam_questions WHERE room_id = 0 AND difficulty = 'easy' ORDER BY RANDOM() LIMIT ?;";
+    rc = sqlite3_prepare_v2(db, sql_easy, -1, &stmt, 0);
+    if (rc == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, easy_count);
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int question_id = sqlite3_column_int(stmt, 0);
+        // Update question to assign it to this room
+        sqlite3_stmt *stmt_update;
+        const char *sql_update = "UPDATE exam_questions SET room_id = ? WHERE id = ?;";
+        if (sqlite3_prepare_v2(db, sql_update, -1, &stmt_update, 0) == SQLITE_OK) {
+          sqlite3_bind_int(stmt_update, 1, room_id);
+          sqlite3_bind_int(stmt_update, 2, question_id);
+          sqlite3_step(stmt_update);
+          sqlite3_finalize(stmt_update);
+          selected_count++;
+        }
+      }
+      sqlite3_finalize(stmt);
+    }
+  }
+  
+  // Select medium questions
+  if (medium_count > 0) {
+    const char *sql_medium = "SELECT id FROM exam_questions WHERE room_id = 0 AND difficulty = 'medium' ORDER BY RANDOM() LIMIT ?;";
+    rc = sqlite3_prepare_v2(db, sql_medium, -1, &stmt, 0);
+    if (rc == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, medium_count);
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int question_id = sqlite3_column_int(stmt, 0);
+        sqlite3_stmt *stmt_update;
+        const char *sql_update = "UPDATE exam_questions SET room_id = ? WHERE id = ?;";
+        if (sqlite3_prepare_v2(db, sql_update, -1, &stmt_update, 0) == SQLITE_OK) {
+          sqlite3_bind_int(stmt_update, 1, room_id);
+          sqlite3_bind_int(stmt_update, 2, question_id);
+          sqlite3_step(stmt_update);
+          sqlite3_finalize(stmt_update);
+          selected_count++;
+        }
+      }
+      sqlite3_finalize(stmt);
+    }
+  }
+  
+  // Select hard questions
+  if (hard_count > 0) {
+    const char *sql_hard = "SELECT id FROM exam_questions WHERE room_id = 0 AND difficulty = 'hard' ORDER BY RANDOM() LIMIT ?;";
+    rc = sqlite3_prepare_v2(db, sql_hard, -1, &stmt, 0);
+    if (rc == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, hard_count);
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int question_id = sqlite3_column_int(stmt, 0);
+        sqlite3_stmt *stmt_update;
+        const char *sql_update = "UPDATE exam_questions SET room_id = ? WHERE id = ?;";
+        if (sqlite3_prepare_v2(db, sql_update, -1, &stmt_update, 0) == SQLITE_OK) {
+          sqlite3_bind_int(stmt_update, 1, room_id);
+          sqlite3_bind_int(stmt_update, 2, question_id);
+          sqlite3_step(stmt_update);
+          sqlite3_finalize(stmt_update);
+          selected_count++;
+        }
+      }
+      sqlite3_finalize(stmt);
+    }
+  }
+  
+  if (selected_count < total_questions) {
+    char warning[256];
+    snprintf(warning, sizeof(warning), 
+             "Warning: Only %d out of %d requested questions were available in the question bank", 
+             selected_count, total_questions);
+    printf("[CREATE_ROOM] %s\n", warning);
+  }
+
   // ===== THÊM VÀO IN-MEMORY =====
   
   if (server_data.room_count < MAX_ROOMS) {
@@ -123,7 +216,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
       server_data.rooms[idx].time_limit = time_limit;
       server_data.rooms[idx].room_status = 0;  // WAITING - chưa bắt đầu
       server_data.rooms[idx].exam_start_time = 0;
-      server_data.rooms[idx].num_questions = 0;  // chưa có câu hỏi
+      server_data.rooms[idx].num_questions = selected_count;  // số câu hỏi đã chọn
       server_data.rooms[idx].participant_count = 0;
       
       // Init arrays
@@ -131,24 +224,24 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
       memset(server_data.rooms[idx].answers, -1, sizeof(server_data.rooms[idx].answers));
       
       server_data.room_count++;
-      printf("[CREATE_ROOM] Added room '%s' (ID=%d) to in-memory at idx=%d\n", 
-             room_name, room_id, idx);
+      printf("[CREATE_ROOM] Added room '%s' (ID=%d) to in-memory at idx=%d with %d questions\n", 
+             room_name, room_id, idx, selected_count);
   }
 
   // ===== GỬI RESPONSE =====
   
-  char response[256];
+  char response[512];
   snprintf(response, sizeof(response), 
-           "CREATE_ROOM_OK|%d|%s|%d\n", 
-           room_id, room_name, time_limit);
+           "CREATE_ROOM_OK|%d|%s|%d|%d|Easy:%d Medium:%d Hard:%d\n", 
+           room_id, room_name, time_limit, selected_count, easy_count, medium_count, hard_count);
   send(socket_fd, response, strlen(response), 0);
 
   // ===== LOGGING =====
   
-  char log_details[256];
+  char log_details[512];
   snprintf(log_details, sizeof(log_details), 
-           "Room: %s (ID=%d, Time=%dm)", 
-           room_name, room_id, time_limit);
+           "Room: %s (ID=%d, Time=%dm, Questions=%d [E:%d M:%d H:%d])", 
+           room_name, room_id, time_limit, selected_count, easy_count, medium_count, hard_count);
   log_activity(creator_id, "CREATE_ROOM", log_details);
 
   printf("[INFO] User %d created room '%s' (ID=%d)\n", 
@@ -175,7 +268,7 @@ void list_test_rooms(int socket_fd) {
     "  COUNT(q.id) as question_count "
     "FROM rooms r "
     "JOIN users u ON r.host_id = u.id "
-    "LEFT JOIN questions q ON r.id = q.room_id "
+    "LEFT JOIN exam_questions q ON r.id = q.room_id "
     "WHERE r.is_active = 1 "
     "GROUP BY r.id "
     "ORDER BY r.created_at DESC;";
@@ -494,7 +587,7 @@ void list_my_rooms(int socket_fd, int user_id) {
     "  r.room_status, "
     "  COUNT(q.id) as question_count "
     "FROM rooms r "
-    "LEFT JOIN questions q ON r.id = q.room_id "
+    "LEFT JOIN exam_questions q ON r.id = q.room_id "
     "WHERE r.host_id = ? "
     "GROUP BY r.id "
     "ORDER BY r.created_at DESC;";
@@ -558,6 +651,80 @@ void list_my_rooms(int socket_fd, int user_id) {
   sqlite3_finalize(stmt);
 
   send(socket_fd, response, offset, 0);
+  pthread_mutex_unlock(&server_data.lock);
+}
+
+// Delete a room (admin only)
+void delete_room(int socket_fd, int user_id, int room_id) {
+  pthread_mutex_lock(&server_data.lock);
+  
+  // Check if user is admin and room owner
+  sqlite3_stmt *stmt;
+  const char *sql_check = "SELECT host_id FROM rooms WHERE id = ? AND is_active = 1;";
+  int rc = sqlite3_prepare_v2(db, sql_check, -1, &stmt, 0);
+  
+  if (rc != SQLITE_OK) {
+    char response[] = "DELETE_ROOM_FAIL|Database error\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  sqlite3_bind_int(stmt, 1, room_id);
+  rc = sqlite3_step(stmt);
+  
+  if (rc != SQLITE_ROW) {
+    char response[] = "DELETE_ROOM_FAIL|Room not found\n";
+    send(socket_fd, response, strlen(response), 0);
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  int host_id = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  
+  if (host_id != user_id) {
+    char response[] = "DELETE_ROOM_FAIL|You are not the owner of this room\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  // Delete associated data: exam_answers, participants, questions
+  const char *sqls[] = {
+    "DELETE FROM exam_answers WHERE room_id = ?;",
+    "DELETE FROM participants WHERE room_id = ?;",
+    "DELETE FROM exam_questions WHERE room_id = ?;",  // Permanently delete questions
+    "DELETE FROM results WHERE room_id = ?;",
+    "DELETE FROM rooms WHERE id = ?;"  // Hard delete the room
+  };
+  
+  for (int i = 0; i < 5; i++) {
+    rc = sqlite3_prepare_v2(db, sqls[i], -1, &stmt, 0);
+    if (rc == SQLITE_OK) {
+      sqlite3_bind_int(stmt, 1, room_id);
+      sqlite3_step(stmt);
+      sqlite3_finalize(stmt);
+    }
+  }
+  
+  // Remove from in-memory
+  for (int i = 0; i < server_data.room_count; i++) {
+    if (server_data.rooms[i].room_id == room_id) {
+      // Shift remaining rooms
+      for (int j = i; j < server_data.room_count - 1; j++) {
+        server_data.rooms[j] = server_data.rooms[j + 1];
+      }
+      server_data.room_count--;
+      break;
+    }
+  }
+  
+  char response[] = "DELETE_ROOM_OK\n";
+  send(socket_fd, response, strlen(response), 0);
+  
+  printf("[INFO] User %d deleted room %d\n", user_id, room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 
@@ -626,7 +793,7 @@ void start_test(int socket_fd, int user_id, int room_id) {
   // Kiểm tra room có câu hỏi chưa
   char check_questions[256];
   snprintf(check_questions, sizeof(check_questions),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+           "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", room_id);
   sqlite3_stmt *check_stmt;
   int question_count = 0;
   
@@ -718,7 +885,7 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
                 // Đếm số câu hỏi
                 char count_query[256];
                 snprintf(count_query, sizeof(count_query),
-                         "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+                         "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", room_id);
                 sqlite3_stmt *count_stmt;
                 if (sqlite3_prepare_v2(db, count_query, -1, &count_stmt, NULL) == SQLITE_OK) {
                     if (sqlite3_step(count_stmt) == SQLITE_ROW) {
@@ -840,7 +1007,7 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
     char question_query[256];
     snprintf(question_query, sizeof(question_query),
              "SELECT id, question_text, option_a, option_b, option_c, option_d "
-             "FROM questions WHERE room_id = %d", room_id);
+             "FROM exam_questions WHERE room_id = %d", room_id);
     
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, question_query, -1, &stmt, NULL) != SQLITE_OK) {
@@ -966,8 +1133,8 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     char question_query[512];
     snprintf(question_query, sizeof(question_query),
              "SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, "
-             "ua.selected_answer FROM questions q "
-             "LEFT JOIN user_answers ua ON q.id = ua.question_id "
+             "ua.selected_answer FROM exam_questions q "
+             "LEFT JOIN exam_answers ua ON q.id = ua.question_id "
              "AND ua.user_id = %d AND ua.room_id = %d "
              "WHERE q.room_id = %d",
              user_id, room_id, room_id);
@@ -1044,7 +1211,7 @@ void load_rooms_from_db(void) {
             // Đếm số câu hỏi
             char count_query[256];
             snprintf(count_query, sizeof(count_query),
-                     "SELECT COUNT(*) FROM questions WHERE room_id = %d",
+                     "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d",
                      server_data.rooms[idx].room_id);
             
             sqlite3_stmt *count_stmt;
@@ -1106,7 +1273,7 @@ static void load_room_answers_internal(int room_id, int user_id) {
     char query[512];
     snprintf(query, sizeof(query),
              "SELECT ua.question_id, ua.selected_answer, ua.answered_at "
-             "FROM user_answers ua "
+             "FROM exam_answers ua "
              "WHERE ua.user_id = %d AND ua.room_id = %d",
              user_id, room_id);
     
@@ -1120,7 +1287,7 @@ static void load_room_answers_internal(int room_id, int user_id) {
             // Tìm question index
             char idx_query[256];
             snprintf(idx_query, sizeof(idx_query),
-                     "SELECT COUNT(*) - 1 FROM questions WHERE room_id = %d AND id <= %d",
+                     "SELECT COUNT(*) - 1 FROM exam_questions WHERE room_id = %d AND id <= %d",
                      room_id, question_id);
             
             sqlite3_stmt *idx_stmt;
@@ -1150,4 +1317,516 @@ void load_room_answers(int room_id, int user_id) {
     pthread_mutex_lock(&server_data.lock);
     load_room_answers_internal(room_id, user_id);
     pthread_mutex_unlock(&server_data.lock);
+}
+
+// Handle GET_USER_ROOMS request
+void handle_get_user_rooms(int socket_fd, int user_id) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    char response[BUFFER_SIZE * 2] = "ROOMS_LIST";
+    int has_rooms = 0;
+    
+    for (int i = 0; i < server_data.room_count; i++) {
+        TestRoom *room = &server_data.rooms[i];
+        
+        if (room->creator_id == user_id) {
+            has_rooms = 1;
+            char room_entry[256];
+            snprintf(room_entry, sizeof(room_entry), "|%d:%s", 
+                    room->room_id, room->room_name);
+            strcat(response, room_entry);
+        }
+    }
+    
+    pthread_mutex_unlock(&server_data.lock);
+    
+    if (!has_rooms) {
+        send(socket_fd, "NO_ROOMS\n", 9, 0);
+    } else {
+        strcat(response, "\n");
+        send(socket_fd, response, strlen(response), 0);
+    }
+}
+
+// Get exam students status (ACTIVE, SUBMITTED, DISCONNECTED, NOT_STARTED)
+void get_exam_students_status(int socket_fd, int user_id, int room_id) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    // Find room and verify permission
+    TestRoom *room = NULL;
+    for (int i = 0; i < server_data.room_count; i++) {
+        if (server_data.rooms[i].room_id == room_id) {
+            room = &server_data.rooms[i];
+            break;
+        }
+    }
+    
+    char response[BUFFER_SIZE * 2];
+    
+    if (room == NULL) {
+        snprintf(response, sizeof(response), "EXAM_STUDENTS_FAIL|Room not found\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    if (room->creator_id != user_id) {
+        snprintf(response, sizeof(response), "EXAM_STUDENTS_FAIL|Permission denied\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Build response: EXAM_STUDENTS_LIST|room_id|user_id:username:status;...
+    int offset = snprintf(response, sizeof(response), "EXAM_STUDENTS_LIST|%d", room_id);
+    
+    // Get all participants
+    for (int i = 0; i < room->participant_count; i++) {
+        int participant_id = room->participants[i];
+        char username[50] = "Unknown";
+        char status[20] = "NOT_STARTED";
+        
+        // Get username
+        for (int j = 0; j < server_data.user_count; j++) {
+            if (server_data.users[j].user_id == participant_id) {
+                strncpy(username, server_data.users[j].username, sizeof(username) - 1);
+                break;
+            }
+        }
+        
+        // Determine status
+        // Check if user has submitted (by checking results table in DB)
+        char check_query[256];
+        snprintf(check_query, sizeof(check_query),
+                 "SELECT COUNT(*) FROM test_results WHERE user_id=%d AND room_id=%d",
+                 participant_id, room_id);
+        
+        sqlite3_stmt *check_stmt;
+        int has_submitted = 0;
+        if (sqlite3_prepare_v2(db, check_query, -1, &check_stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+                has_submitted = sqlite3_column_int(check_stmt, 0) > 0;
+            }
+            sqlite3_finalize(check_stmt);
+        }
+        
+        if (has_submitted) {
+            strcpy(status, "SUBMITTED");
+        } else {
+            // Check if user has any answers (started but not submitted)
+            char answer_query[256];
+            snprintf(answer_query, sizeof(answer_query),
+                     "SELECT COUNT(*) FROM exam_answers WHERE user_id=%d AND room_id=%d",
+                     participant_id, room_id);
+            
+            sqlite3_stmt *ans_stmt;
+            int has_answers = 0;
+            if (sqlite3_prepare_v2(db, answer_query, -1, &ans_stmt, NULL) == SQLITE_OK) {
+                if (sqlite3_step(ans_stmt) == SQLITE_ROW) {
+                    has_answers = sqlite3_column_int(ans_stmt, 0) > 0;
+                }
+                sqlite3_finalize(ans_stmt);
+            }
+            
+            if (has_answers) {
+                // Has started, check if online
+                int is_online = 0;
+                for (int j = 0; j < server_data.user_count; j++) {
+                    if (server_data.users[j].user_id == participant_id && 
+                        server_data.users[j].is_online == 1) {
+                        is_online = 1;
+                        break;
+                    }
+                }
+                strcpy(status, is_online ? "ACTIVE" : "DISCONNECTED");
+            } else {
+                strcpy(status, "NOT_STARTED");
+            }
+        }
+        
+        offset += snprintf(response + offset, sizeof(response) - offset,
+                         "|%d:%s:%s", participant_id, username, status);
+    }
+    
+    strcat(response, "\n");
+    send(socket_fd, response, strlen(response), 0);
+    
+    printf("[GET_EXAM_STUDENTS] Success: Sent status of %d students in room %d to user %d\n",
+           room->participant_count, room_id, user_id);
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+// Get all questions in an exam room
+void get_room_questions(int socket_fd, int user_id, int room_id) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    // Find room and verify permission
+    TestRoom *room = NULL;
+    for (int i = 0; i < server_data.room_count; i++) {
+        if (server_data.rooms[i].room_id == room_id) {
+            room = &server_data.rooms[i];
+            break;
+        }
+    }
+    
+    char response[BUFFER_SIZE * 3];
+    
+    if (room == NULL) {
+        snprintf(response, sizeof(response), "ROOM_QUESTIONS_FAIL|Room not found\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    if (room->creator_id != user_id) {
+        snprintf(response, sizeof(response), "ROOM_QUESTIONS_FAIL|Permission denied\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Get questions from database
+    char query[512];
+    snprintf(query, sizeof(query),
+             "SELECT id, question_text, option_a, option_b, option_c, option_d, "
+             "correct_answer, difficulty, category FROM exam_questions WHERE room_id=%d ORDER BY id",
+             room_id);
+    
+    sqlite3_stmt *stmt;
+    int offset = snprintf(response, sizeof(response), "ROOM_QUESTIONS_LIST|%d", room_id);
+    int question_count = 0;
+    
+    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            int q_id = sqlite3_column_int(stmt, 0);
+            const char *q_text = (const char *)sqlite3_column_text(stmt, 1);
+            const char *opt_a = (const char *)sqlite3_column_text(stmt, 2);
+            const char *opt_b = (const char *)sqlite3_column_text(stmt, 3);
+            const char *opt_c = (const char *)sqlite3_column_text(stmt, 4);
+            const char *opt_d = (const char *)sqlite3_column_text(stmt, 5);
+            int correct = sqlite3_column_int(stmt, 6);
+            const char *difficulty = (const char *)sqlite3_column_text(stmt, 7);
+            const char *category = (const char *)sqlite3_column_text(stmt, 8);
+            
+            offset += snprintf(response + offset, sizeof(response) - offset,
+                             "|%d:%s:%s:%s:%s:%s:%d:%s:%s",
+                             q_id, q_text ? q_text : "",
+                             opt_a ? opt_a : "", opt_b ? opt_b : "",
+                             opt_c ? opt_c : "", opt_d ? opt_d : "",
+                             correct, difficulty ? difficulty : "", category ? category : "");
+            question_count++;
+        }
+        sqlite3_finalize(stmt);
+    }
+    
+    strcat(response, "\n");
+    send(socket_fd, response, strlen(response), 0);
+    
+    printf("[GET_ROOM_QUESTIONS] Success: Sent %d questions from room %d to user %d\n",
+           question_count, room_id, user_id);
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+// Get single question detail for editing
+void get_question_detail(int socket_fd, int user_id, int room_id, int question_id) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    // Verify room ownership
+    TestRoom *room = NULL;
+    for (int i = 0; i < server_data.room_count; i++) {
+        if (server_data.rooms[i].room_id == room_id) {
+            room = &server_data.rooms[i];
+            break;
+        }
+    }
+    
+    if (room == NULL || room->creator_id != user_id) {
+        send(socket_fd, "QUESTION_DETAIL_FAIL|Permission denied\n", 40, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Query question from database
+    char query[512];
+    snprintf(query, sizeof(query),
+             "SELECT id, question_text, option_a, option_b, option_c, option_d, "
+             "correct_answer, difficulty, category FROM exam_questions WHERE id=%d AND room_id=%d",
+             question_id, room_id);
+    
+    sqlite3_stmt *stmt;
+    char response[BUFFER_SIZE];
+    
+    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            int q_id = sqlite3_column_int(stmt, 0);
+            const char *q_text = (const char *)sqlite3_column_text(stmt, 1);
+            const char *opt_a = (const char *)sqlite3_column_text(stmt, 2);
+            const char *opt_b = (const char *)sqlite3_column_text(stmt, 3);
+            const char *opt_c = (const char *)sqlite3_column_text(stmt, 4);
+            const char *opt_d = (const char *)sqlite3_column_text(stmt, 5);
+            int correct = sqlite3_column_int(stmt, 6);
+            const char *difficulty = (const char *)sqlite3_column_text(stmt, 7);
+            const char *category = (const char *)sqlite3_column_text(stmt, 8);
+            
+            snprintf(response, sizeof(response),
+                    "QUESTION_DETAIL|%d|%s|%s|%s|%s|%s|%d|%s|%s\n",
+                    q_id, q_text ? q_text : "",
+                    opt_a ? opt_a : "", opt_b ? opt_b : "",
+                    opt_c ? opt_c : "", opt_d ? opt_d : "",
+                    correct, difficulty ? difficulty : "", category ? category : "");
+            send(socket_fd, response, strlen(response), 0);
+        } else {
+            send(socket_fd, "QUESTION_DETAIL_FAIL|Question not found\n", 41, 0);
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        send(socket_fd, "QUESTION_DETAIL_FAIL|Database error\n", 37, 0);
+    }
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+// Update exam question
+void update_exam_question(int socket_fd, int user_id, int room_id, int question_id, char *new_data) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    // Verify room ownership
+    TestRoom *room = NULL;
+    for (int i = 0; i < server_data.room_count; i++) {
+        if (server_data.rooms[i].room_id == room_id) {
+            room = &server_data.rooms[i];
+            break;
+        }
+    }
+    
+    if (room == NULL || room->creator_id != user_id) {
+        send(socket_fd, "UPDATE_QUESTION_FAIL|Permission denied\n", 40, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Parse new_data: question_text|opt1|opt2|opt3|opt4|correct|difficulty|category
+    char data_copy[2048];
+    strncpy(data_copy, new_data, sizeof(data_copy) - 1);
+    data_copy[sizeof(data_copy) - 1] = '\0';
+    
+    char *q_text = strtok(data_copy, "|");
+    char *opt1 = strtok(NULL, "|");
+    char *opt2 = strtok(NULL, "|");
+    char *opt3 = strtok(NULL, "|");
+    char *opt4 = strtok(NULL, "|");
+    char *correct_str = strtok(NULL, "|");
+    char *difficulty = strtok(NULL, "|");
+    char *category = strtok(NULL, "|");
+    
+    if (!q_text || !opt1 || !opt2 || !opt3 || !opt4 || !correct_str || !difficulty || !category) {
+        send(socket_fd, "UPDATE_QUESTION_FAIL|Invalid data format\n", 42, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    int correct_answer = atoi(correct_str);
+    
+    // Update in database using sqlite3_mprintf for safety
+    char *query = sqlite3_mprintf(
+        "UPDATE exam_questions SET question_text=%Q, option_a=%Q, option_b=%Q, "
+        "option_c=%Q, option_d=%Q, correct_answer=%d, difficulty=%Q, category=%Q "
+        "WHERE id=%d AND room_id=%d",
+        q_text, opt1, opt2, opt3, opt4, correct_answer, difficulty, category,
+        question_id, room_id);
+    
+    if (!query) {
+        send(socket_fd, "UPDATE_QUESTION_FAIL|Memory error\n", 35, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db, query, NULL, NULL, &err_msg);
+    sqlite3_free(query);
+    
+    if (rc == SQLITE_OK) {
+        send(socket_fd, "UPDATE_QUESTION_OK\n", 19, 0);
+        printf("[UPDATE_QUESTION] Question %d updated in room %d by user %d\n",
+               question_id, room_id, user_id);
+    } else {
+        send(socket_fd, "UPDATE_QUESTION_FAIL|Database error\n", 37, 0);
+        if (err_msg) {
+            fprintf(stderr, "[UPDATE_QUESTION] Error: %s\n", err_msg);
+            sqlite3_free(err_msg);
+        }
+    }
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+
+// Update a room question
+void update_room_question(int socket_fd, int user_id, int room_id, int question_id, char *new_data) {
+    pthread_mutex_lock(&server_data.lock);
+    
+    // Find room and verify permission
+    TestRoom *room = NULL;
+    for (int i = 0; i < server_data.room_count; i++) {
+        if (server_data.rooms[i].room_id == room_id) {
+            room = &server_data.rooms[i];
+            break;
+        }
+    }
+    
+    char response[256];
+    
+    if (room == NULL) {
+        snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_FAIL|Room not found\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    if (room->creator_id != user_id) {
+        snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_FAIL|Permission denied\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Parse new_data: question_text|opt1|opt2|opt3|opt4|correct|difficulty|category
+    char data_copy[2048];
+    strncpy(data_copy, new_data, sizeof(data_copy) - 1);
+    
+    char *q_text = strtok(data_copy, "|");
+    char *opt1 = strtok(NULL, "|");
+    char *opt2 = strtok(NULL, "|");
+    char *opt3 = strtok(NULL, "|");
+    char *opt4 = strtok(NULL, "|");
+    char *correct_str = strtok(NULL, "|");
+    char *difficulty = strtok(NULL, "|");
+    char *category = strtok(NULL, "|");
+    
+    if (!q_text || !opt1 || !opt2 || !opt3 || !opt4 || !correct_str || !difficulty || !category) {
+        snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_FAIL|Invalid data format\n");
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    int correct_answer = atoi(correct_str);
+    
+    // Update in database
+    char query[2048];
+    char *err_msg = 0;
+    snprintf(query, sizeof(query),
+             "UPDATE exam_questions SET question_text='%s', option_a='%s', option_b='%s', "
+             "option_c='%s', option_d='%s', correct_answer=%d, difficulty='%s', category='%s' "
+             "WHERE id=%d AND room_id=%d;",
+             q_text, opt1, opt2, opt3, opt4, correct_answer, difficulty, category,
+             question_id, room_id);
+    
+    if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
+        snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_FAIL|Database error\n");
+        fprintf(stderr, "[UPDATE_ROOM_QUESTION] DB error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        send(socket_fd, response, strlen(response), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    // Update in-memory
+    for (int i = 0; i < server_data.question_count; i++) {
+        if (server_data.questions[i].id == question_id) {
+            strncpy(server_data.questions[i].text, q_text, sizeof(server_data.questions[i].text) - 1);
+            strncpy(server_data.questions[i].options[0], opt1, sizeof(server_data.questions[i].options[0]) - 1);
+            strncpy(server_data.questions[i].options[1], opt2, sizeof(server_data.questions[i].options[1]) - 1);
+            strncpy(server_data.questions[i].options[2], opt3, sizeof(server_data.questions[i].options[2]) - 1);
+            strncpy(server_data.questions[i].options[3], opt4, sizeof(server_data.questions[i].options[3]) - 1);
+            server_data.questions[i].correct_answer = correct_answer;
+            strncpy(server_data.questions[i].difficulty, difficulty, sizeof(server_data.questions[i].difficulty) - 1);
+            strncpy(server_data.questions[i].category, category, sizeof(server_data.questions[i].category) - 1);
+            break;
+        }
+    }
+    
+    snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_OK|Question updated successfully\n");
+    send(socket_fd, response, strlen(response), 0);
+    
+    printf("[UPDATE_ROOM_QUESTION] Success: Question %d updated in room %d by user %d\n",
+           question_id, room_id, user_id);
+    log_activity(user_id, "UPDATE_ROOM_QUESTION", "Updated exam question");
+    
+    pthread_mutex_unlock(&server_data.lock);
+}
+
+// Get room members/participants
+void get_room_members(int socket_fd, int user_id, int room_id) {
+  pthread_mutex_lock(&server_data.lock);
+  
+  // Check if user is the room creator
+  TestRoom *room = NULL;
+  for (int i = 0; i < server_data.room_count; i++) {
+    if (server_data.rooms[i].room_id == room_id) {
+      room = &server_data.rooms[i];
+      break;
+    }
+  }
+  
+  if (room == NULL || room->creator_id != user_id) {
+    char response[] = "ROOM_MEMBERS_FAIL|Permission denied\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  // Query database for room participants
+  const char *sql = "SELECT DISTINCT u.user_id, u.username, "
+                    "COALESCE(MAX(r.score), 0) as best_score "
+                    "FROM users u "
+                    "LEFT JOIN results r ON u.user_id = r.user_id AND r.room_id = ? "
+                    "WHERE EXISTS (SELECT 1 FROM results WHERE user_id = u.user_id AND room_id = ?) "
+                    "GROUP BY u.user_id, u.username "
+                    "ORDER BY best_score DESC;";
+  
+  sqlite3_stmt *stmt;
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+    char response[] = "ROOM_MEMBERS_FAIL|Database error\n";
+    send(socket_fd, response, strlen(response), 0);
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  sqlite3_bind_int(stmt, 1, room_id);
+  sqlite3_bind_int(stmt, 2, room_id);
+  
+  char response[BUFFER_SIZE];
+  int offset = snprintf(response, sizeof(response), "ROOM_MEMBERS|%d|", room_id);
+  
+  int count = 0;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int uid = sqlite3_column_int(stmt, 0);
+    const char *username = (const char*)sqlite3_column_text(stmt, 1);
+    int score = sqlite3_column_int(stmt, 2);
+    
+    offset += snprintf(response + offset, sizeof(response) - offset,
+                       "%d:%s:%d;", uid, username, score);
+    count++;
+  }
+  
+  sqlite3_finalize(stmt);
+  
+  // Add count after room_id
+  char final_response[BUFFER_SIZE];
+  snprintf(final_response, sizeof(final_response), "ROOM_MEMBERS|%d|%d|", room_id, count);
+  
+  if (count == 0) {
+    strcat(final_response, "NONE");
+  } else {
+    // Copy member data
+    strcat(final_response, strchr(response + 14, '|') + 1);
+  }
+  
+  strcat(final_response, "\n");
+  send(socket_fd, final_response, strlen(final_response), 0);
+  
+  pthread_mutex_unlock(&server_data.lock);
 }

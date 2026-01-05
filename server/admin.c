@@ -114,7 +114,7 @@ void get_system_stats(int socket_fd, int admin_id)
     sqlite3_finalize(stmt);
 
     // Get most popular category
-    strcpy(query, "SELECT category, COUNT(*) as cnt FROM questions GROUP BY category ORDER BY cnt DESC LIMIT 1;");
+    strcpy(query, "SELECT category, COUNT(*) as cnt FROM exam_questions GROUP BY category ORDER BY cnt DESC LIMIT 1;");
     if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
     {
       const char *popular_cat = "N/A";
@@ -179,7 +179,7 @@ void delete_question(int socket_fd, int admin_id, int question_id)
   pthread_mutex_lock(&server_data.lock);
 
   char query[300];
-  snprintf(query, sizeof(query), "DELETE FROM questions WHERE id = %d;", question_id);
+  snprintf(query, sizeof(query), "DELETE FROM exam_questions WHERE id = %d;", question_id);
 
   char *err_msg = 0;
   if (sqlite3_exec(db, query, 0, 0, &err_msg) == SQLITE_OK)

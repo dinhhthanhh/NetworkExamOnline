@@ -1,7 +1,9 @@
 #include "admin_ui.h"
+#include "exam_room_creator.h"
 #include "ui_utils.h"
 #include "ui.h"
 #include "net.h"
+#include "question_ui.h"
 #include <string.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -448,6 +450,63 @@ void on_close_room_clicked(GtkWidget *widget, gpointer data) {
     }
 }
 
+// Delete room callback
+void on_delete_room_clicked(GtkWidget *widget, gpointer data) {
+    int room_id = GPOINTER_TO_INT(data);
+    
+    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                               GTK_DIALOG_DESTROY_WITH_PARENT,
+                                               GTK_MESSAGE_QUESTION,
+                                               GTK_BUTTONS_YES_NO,
+                                               "🗑️ Delete this room?");
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+                                             "This action cannot be undone. All data associated with this room will be permanently deleted.");
+    int response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    
+    if (response != GTK_RESPONSE_YES) {
+        return;
+    }
+    
+    char msg[64];
+    snprintf(msg, sizeof(msg), "DELETE_ROOM|%d\n", room_id);
+    send_message(msg);
+    
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    GtkWidget *result_dialog;
+    if (n > 0 && strncmp(buffer, "DELETE_ROOM_OK", 14) == 0) {
+        result_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                       GTK_MESSAGE_INFO,
+                                       GTK_BUTTONS_OK,
+                                       "✅ Room deleted successfully!");
+        gtk_dialog_run(GTK_DIALOG(result_dialog));
+        gtk_widget_destroy(result_dialog);
+        
+        // Refresh admin panel
+        create_admin_panel();
+    } else {
+        char *error_msg = strchr(buffer, '|');
+        if (error_msg) {
+            error_msg++;
+        } else {
+            error_msg = "Failed to delete room";
+        }
+        
+        result_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
+                                       GTK_DIALOG_DESTROY_WITH_PARENT,
+                                       GTK_MESSAGE_ERROR,
+                                       GTK_BUTTONS_OK,
+                                       "❌ Error");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(result_dialog),
+                                                 "%s", error_msg);
+        gtk_dialog_run(GTK_DIALOG(result_dialog));
+        gtk_widget_destroy(result_dialog);
+    }
+}
+
 void create_admin_panel()
 {
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
@@ -462,9 +521,25 @@ void create_admin_panel()
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 0);
 
+    // Action buttons at top
+    GtkWidget *top_button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    
+    GtkWidget *create_btn = gtk_button_new_with_label("➕ CREATE ROOM");
+    style_button(create_btn, "#27ae60");
+    g_signal_connect(create_btn, "clicked", G_CALLBACK(on_admin_create_room_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(top_button_box), create_btn, TRUE, TRUE, 0);
+    
+    gtk_box_pack_start(GTK_BOX(vbox), top_button_box, FALSE, FALSE, 5);
+    
+    GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(vbox), sep2, FALSE, FALSE, 5);
+
+    // Flush old socket data to prevent stale responses
+    flush_socket_buffer(client.socket_fd);
+    
     // Request rooms từ server
     send_message("LIST_MY_ROOMS\n");
-    char buffer[BUFFER_SIZE];
+    char buffer[BUFFER_SIZE * 4];
     ssize_t n = receive_message(buffer, sizeof(buffer));
 
     // Tạo scrolled window chứa list rooms
@@ -479,9 +554,17 @@ void create_admin_panel()
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
 
     // Parse và hiển thị rooms
-    if (n > 0 && strncmp(buffer, "LIST_MY_ROOMS_OK", 16) == 0) {
+    if (n > 0 && strncmp(buffer, "LIST_MY_ROOMS_OK|", 17) == 0) {
+        // Parse header: LIST_MY_ROOMS_OK|count
+        int room_count_expected = 0;
+        sscanf(buffer, "LIST_MY_ROOMS_OK|%d", &room_count_expected);
+        
         char *saveptr1, *saveptr2;  // For strtok_r
-        char *line = strtok_r(buffer, "\n", &saveptr1);
+        char buffer_copy[BUFFER_SIZE * 4];
+        strncpy(buffer_copy, buffer, sizeof(buffer_copy) - 1);
+        buffer_copy[sizeof(buffer_copy) - 1] = '\0';
+        
+        char *line = strtok_r(buffer_copy, "\n", &saveptr1);
         line = strtok_r(NULL, "\n", &saveptr1); // Bỏ qua header line
 
         int room_count = 0;
@@ -547,6 +630,33 @@ void create_admin_panel()
                                    GINT_TO_POINTER(room_id));
                     gtk_box_pack_start(GTK_BOX(btn_box), close_btn, FALSE, FALSE, 0);
                 }
+                
+                // Always show manage questions button
+                GtkWidget *questions_btn = gtk_button_new_with_label("📝 Questions");
+                style_button(questions_btn, "#3498db");
+                gtk_widget_set_size_request(questions_btn, 120, 40);
+                g_signal_connect(questions_btn, "clicked", 
+                               G_CALLBACK(show_exam_question_manager), 
+                               GINT_TO_POINTER(room_id));
+                gtk_box_pack_start(GTK_BOX(btn_box), questions_btn, FALSE, FALSE, 0);
+                
+                // View Members button
+                GtkWidget *members_btn = gtk_button_new_with_label("👥 Members");
+                style_button(members_btn, "#9b59b6");
+                gtk_widget_set_size_request(members_btn, 120, 40);
+                g_signal_connect(members_btn, "clicked", 
+                               G_CALLBACK(on_view_exam_members_clicked), 
+                               GINT_TO_POINTER(room_id));
+                gtk_box_pack_start(GTK_BOX(btn_box), members_btn, FALSE, FALSE, 0);
+                
+                // Always show delete button
+                GtkWidget *delete_btn = gtk_button_new_with_label("🗑️ DELETE");
+                style_button(delete_btn, "#c0392b");
+                gtk_widget_set_size_request(delete_btn, 120, 40);
+                g_signal_connect(delete_btn, "clicked", 
+                               G_CALLBACK(on_delete_room_clicked), 
+                               GINT_TO_POINTER(room_id));
+                gtk_box_pack_start(GTK_BOX(btn_box), delete_btn, FALSE, FALSE, 0);
                 
                 gtk_box_pack_end(GTK_BOX(hbox), btn_box, FALSE, FALSE, 0);
 
@@ -618,13 +728,13 @@ void create_question_bank_screen()
 
     // **MỚI: Dropdown chọn room**
     GtkWidget *room_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(room_label), "<span foreground='#e74c3c' weight='bold'>Select Your Room:</span>");
+    gtk_label_set_markup(GTK_LABEL(room_label), "<span foreground='#e74c3c' weight='bold'>Select Your Room (Exam or Practice):</span>");
     GtkWidget *room_combo = gtk_combo_box_text_new();
     gtk_box_pack_start(GTK_BOX(form_box), room_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(form_box), room_combo, FALSE, FALSE, 0);
 
-    // Request danh sách rooms từ server
-    request_user_rooms(room_combo);
+    // Request danh sách rooms từ server (both exam and practice)
+    request_all_rooms_with_type(room_combo);
 
     GtkWidget *question_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(question_label), "<span foreground='#34495e'>Question:</span>");
@@ -1013,82 +1123,148 @@ void create_csv_import_screen()
 // Admin-specific create room handler
 void on_admin_create_room_clicked(GtkWidget *widget, gpointer data)
 {
-    // Tạo dialog để nhập thông tin phòng
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("➕ Create New Room",
-                                                     GTK_WINDOW(main_window),
-                                                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                     "Cancel", GTK_RESPONSE_CANCEL,
-                                                     "Create", GTK_RESPONSE_ACCEPT,
-                                                     NULL);
+    // Call the new exam room creator with question selection
+    create_exam_room_with_questions(widget, data);
+}
 
-    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
-    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
-    gtk_container_add(GTK_CONTAINER(content_area), grid);
+// Show add questions dialog with room type display
+void show_add_questions_dialog(void) {
+    // Simply redirect to the existing question bank screen
+    // The user requested to keep the add question functionality but improve the room selection
+    create_question_bank_screen();
+}
 
-    // Room name
-    GtkWidget *name_label = gtk_label_new("Room Name:");
-    GtkWidget *name_entry = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(name_entry), "e.g., Math Quiz 101");
-    gtk_grid_attach(GTK_GRID(grid), name_label, 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), name_entry, 1, 0, 1, 1);
-
-    // Time limit
-    GtkWidget *time_label = gtk_label_new("Time Limit (minutes):");
-    GtkWidget *time_spin = gtk_spin_button_new_with_range(1, 180, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(time_spin), 30);
-    gtk_grid_attach(GTK_GRID(grid), time_label, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), time_spin, 1, 1, 1, 1);
-
-    gtk_widget_show_all(dialog);
-
-    int response = gtk_dialog_run(GTK_DIALOG(dialog));
-    if (response == GTK_RESPONSE_ACCEPT)
-    {
-        const char *room_name = gtk_entry_get_text(GTK_ENTRY(name_entry));
-        int time_limit = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(time_spin));
-
-        if (strlen(room_name) > 0)
-        {
-            char cmd[256];
-            snprintf(cmd, sizeof(cmd), "CREATE_ROOM|%s|%d\n", room_name, time_limit);
-            send_message(cmd);
-
-            char buffer[BUFFER_SIZE];
-            ssize_t n = receive_message(buffer, sizeof(buffer));
-
-            if (n > 0 && strstr(buffer, "CREATE_ROOM_OK"))
-            {
-                GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                                   GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                                   "✅ Room created successfully!");
-                gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(success_dialog),
-                                                         "You can now add questions and manage this room.");
-                gtk_dialog_run(GTK_DIALOG(success_dialog));
-                gtk_widget_destroy(success_dialog);
-
-                // Quay về main menu
-                create_main_menu();
+// Request all rooms (exam + practice) with type labels
+void request_all_rooms_with_type(GtkWidget *room_combo) {
+    // Clear existing items
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(room_combo));
+    
+    // Don't auto-select - leave empty for user to choose
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), "-1", "-- Select a Room --");
+    
+    // Flush old socket data
+    flush_socket_buffer(client.socket_fd);
+    
+    // Get exam rooms
+    char request[256];
+    snprintf(request, sizeof(request), "GET_USER_ROOMS|%d\n", current_user_id);
+    send_message(request);
+    
+    char buffer[BUFFER_SIZE];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    if (n > 0) {
+        buffer[n] = '\0';
+        
+        if (strstr(buffer, "ROOMS_LIST")) {
+            char *token = strtok(buffer + 11, "|");
+            while (token != NULL) {
+                char *colon = strchr(token, ':');
+                if (colon) {
+                    *colon = '\0';
+                    char *room_id = token;
+                    char *room_name = colon + 1;
+                    
+                    // Add label to show it's an exam room
+                    char display_name[256];
+                    snprintf(display_name, sizeof(display_name), "[EXAM] %s", room_name);
+                    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), room_id, display_name);
+                }
+                token = strtok(NULL, "|");
             }
-            else 
-            {
-                GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                                 GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                                 GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                                 "❌ Failed to create room!");
-                gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
-                                                         "Server response: %s", buffer);
-                gtk_dialog_run(GTK_DIALOG(error_dialog));
-                gtk_widget_destroy(error_dialog);
-            }
-        }
-        else
-        {
-            show_error_dialog("Room name cannot be empty!");
         }
     }
-    gtk_widget_destroy(GTK_WIDGET(dialog));
+    
+    // Get practice rooms
+    flush_socket_buffer(client.socket_fd);
+    snprintf(request, sizeof(request), "GET_PRACTICE_ROOMS|%d\n", current_user_id);
+    send_message(request);
+    
+    n = receive_message(buffer, sizeof(buffer));
+    if (n > 0) {
+        buffer[n] = '\0';
+        
+        if (strstr(buffer, "PRACTICE_ROOMS_LIST")) {
+            char *token = strtok(buffer + 20, "|");
+            while (token != NULL) {
+                char *colon = strchr(token, ':');
+                if (colon) {
+                    *colon = '\0';
+                    // Use practice_id prefixed with 'P' to distinguish from exam room ids
+                    char practice_id[16];
+                    snprintf(practice_id, sizeof(practice_id), "P%s", token);
+                    char *room_name = colon + 1;
+                    
+                    // Add label to show it's a practice room
+                    char display_name[256];
+                    snprintf(display_name, sizeof(display_name), "[PRACTICE] %s", room_name);
+                    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(room_combo), practice_id, display_name);
+                }
+                token = strtok(NULL, "|");
+            }
+        }
+    }
+    
+    // Set to the placeholder (don't auto-select)
+    gtk_combo_box_set_active(GTK_COMBO_BOX(room_combo), 0);
+}
+
+// View exam room members callback
+void on_view_exam_members_clicked(GtkWidget *widget, gpointer data) {
+    int room_id = GPOINTER_TO_INT(data);
+    
+    char msg[128];
+    snprintf(msg, sizeof(msg), "GET_ROOM_MEMBERS|%d\n", room_id);
+    send_message(msg);
+    
+    char recv_buf[BUFFER_SIZE];
+    ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
+    
+    if (n <= 0 || strncmp(recv_buf, "ROOM_MEMBERS|", 13) != 0) {
+        show_error_dialog("Failed to load room members");
+        return;
+    }
+    
+    // Parse: ROOM_MEMBERS|room_id|count|user_id:username:score;...
+    char *response_data = recv_buf + 13;
+    char *room_id_str = strtok(response_data, "|");
+    char *count_str = strtok(NULL, "|");
+    char *members_data = strtok(NULL, "|");
+    
+    int count = atoi(count_str ? count_str : "0");
+    (void)room_id_str; // Suppress unused warning
+    
+    GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(main_window),
+        GTK_DIALOG_MODAL,
+        GTK_MESSAGE_INFO,
+        GTK_BUTTONS_OK,
+        "Exam Room Members");
+    
+    char msg_text[BUFFER_SIZE];
+    snprintf(msg_text, sizeof(msg_text), "Total Members: %d\n\n", count);
+    
+    if (count > 0 && members_data && strcmp(members_data, "NONE\n") != 0) {
+        strcat(msg_text, "Username | Score\n");
+        strcat(msg_text, "────────────────\n");
+        
+        char *token = strtok(members_data, ";");
+        while (token != NULL) {
+            int user_id, score;
+            char username[50];
+            
+            if (sscanf(token, "%d:%49[^:]:%d", &user_id, username, &score) == 3) {
+                char line[256];
+                snprintf(line, sizeof(line), "%s | %d\n", username, score);
+                strcat(msg_text, line);
+            }
+            
+            token = strtok(NULL, ";");
+        }
+    } else {
+        strcat(msg_text, "No members in this room yet.");
+    }
+    
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "%s", msg_text);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
 }

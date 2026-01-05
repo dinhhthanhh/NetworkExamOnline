@@ -253,3 +253,69 @@ void logout_user(int user_id, int socket_fd)
 
   pthread_mutex_unlock(&server_data.lock);
 }
+
+// Change password function
+void change_password(int socket_fd, int user_id, char *old_password, char *new_password)
+{
+  char response[256];
+  char old_hashed[65], new_hashed[65];
+  
+  if (!old_password || !new_password || user_id <= 0) {
+    snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Invalid parameters\n");
+    send(socket_fd, response, strlen(response), 0);
+    printf("[CHANGE_PASSWORD] Failed: Invalid parameters for user %d\n", user_id);
+    return;
+  }
+  
+  // Validate new password length
+  if (strlen(new_password) < 3) {
+    snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|New password too short (min 3 characters)\n");
+    send(socket_fd, response, strlen(response), 0);
+    printf("[CHANGE_PASSWORD] Failed: New password too short for user %d\n", user_id);
+    return;
+  }
+  
+  hash_password(old_password, old_hashed);
+  hash_password(new_password, new_hashed);
+  
+  pthread_mutex_lock(&server_data.lock);
+  
+  // Verify old password
+  char query[512];
+  sqlite3_stmt *stmt;
+  snprintf(query, sizeof(query),
+           "SELECT id FROM users WHERE id=%d AND password='%s';", user_id, old_hashed);
+  
+  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK) {
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+      // Old password correct, update to new password
+      sqlite3_finalize(stmt);
+      
+      char update_query[512];
+      char *err_msg = 0;
+      snprintf(update_query, sizeof(update_query),
+               "UPDATE users SET password='%s' WHERE id=%d;", new_hashed, user_id);
+      
+      if (sqlite3_exec(db, update_query, 0, 0, &err_msg) == SQLITE_OK) {
+        snprintf(response, sizeof(response), "CHANGE_PASSWORD_OK|Password changed successfully\n");
+        printf("[CHANGE_PASSWORD] Success: User %d changed password\n", user_id);
+        log_activity(user_id, "CHANGE_PASSWORD", "Password changed successfully");
+      } else {
+        snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Database error\n");
+        printf("[CHANGE_PASSWORD] Failed: DB error for user %d: %s\n", user_id, err_msg);
+        sqlite3_free(err_msg);
+      }
+    } else {
+      // Old password incorrect
+      sqlite3_finalize(stmt);
+      snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Old password incorrect\n");
+      printf("[CHANGE_PASSWORD] Failed: Incorrect old password for user %d\n", user_id);
+    }
+  } else {
+    snprintf(response, sizeof(response), "CHANGE_PASSWORD_FAIL|Database query error\n");
+    printf("[CHANGE_PASSWORD] Failed: DB query error for user %d\n", user_id);
+  }
+  
+  pthread_mutex_unlock(&server_data.lock);
+  send(socket_fd, response, strlen(response), 0);
+}

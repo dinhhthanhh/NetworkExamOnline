@@ -9,41 +9,7 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-void handle_get_user_rooms(int client_socket, int user_id)
-{
-    char query[256];
-    snprintf(query, sizeof(query), 
-             "SELECT id, name FROM rooms WHERE host_id = %d AND is_active = 1", 
-             user_id);
-    
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) != SQLITE_OK) {
-        send(client_socket, "ERROR|Database error\n", 21, 0);
-        return;
-    }
-    
-    char response[4096] = "ROOMS_LIST";
-    int has_rooms = 0;
-    
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        has_rooms = 1;
-        int room_id = sqlite3_column_int(stmt, 0);
-        const char *room_name = (const char *)sqlite3_column_text(stmt, 1);
-        
-        char room_entry[256];
-        snprintf(room_entry, sizeof(room_entry), "|%d:%s", room_id, room_name);
-        strcat(response, room_entry);
-    }
-    
-    sqlite3_finalize(stmt);
-    
-    if (!has_rooms) {
-        send(client_socket, "NO_ROOMS\n", 9, 0);
-    } else {
-        strcat(response, "\n");
-        send(client_socket, response, strlen(response), 0);
-    }
-}
+// handle_get_user_rooms() moved to rooms.c
 
 void handle_add_question(int client_socket, char *data)
 {
@@ -107,7 +73,7 @@ void handle_add_question(int client_socket, char *data)
     
     // Escape strings for SQL safety using sqlite3_mprintf
     char *query = sqlite3_mprintf(
-        "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+        "INSERT INTO exam_questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
         "VALUES (%d, %Q, %Q, %Q, %Q, %Q, %d, %Q, %Q)",
         room_id, question, opt1, opt2, opt3, opt4, correct_answer, difficulty, category);
     
@@ -333,7 +299,7 @@ int import_questions_from_csv(const char *filename, int room_id)
         sqlite3_snprintf(sizeof(escaped_cat), escaped_cat, "%q", category);
         
         char *query = sqlite3_mprintf(
-            "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+            "INSERT INTO exam_questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
             "VALUES (%d, %Q, %Q, %Q, %Q, %Q, %d, '%s', '%s');",
             room_id, q_text, opt_a, opt_b, opt_c, opt_d, correct, escaped_diff, escaped_cat);
         

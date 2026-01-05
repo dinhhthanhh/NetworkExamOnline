@@ -410,6 +410,34 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
         return;
     }
     
+    // Ensure question list is loaded from database if in-memory mapping is empty
+    if (room->num_questions == 0) {
+        sqlite3_stmt *q_stmt = NULL;
+        const char *count_sql = "SELECT id FROM practice_questions WHERE practice_id = ? ORDER BY id";
+        if (sqlite3_prepare_v2(db, count_sql, -1, &q_stmt, NULL) == SQLITE_OK) {
+            int idx = 0;
+            while (sqlite3_step(q_stmt) == SQLITE_ROW && idx < MAX_QUESTIONS) {
+                int qid = sqlite3_column_int(q_stmt, 0);
+                room->question_ids[idx] = qid;
+                
+                // Also rebuild mapping table for future runs
+                sqlite3_stmt *map_stmt = NULL;
+                const char *map_sql = "INSERT OR IGNORE INTO practice_room_questions (practice_id, question_id, question_order) VALUES (?, ?, ?);";
+                if (sqlite3_prepare_v2(db, map_sql, -1, &map_stmt, NULL) == SQLITE_OK) {
+                    sqlite3_bind_int(map_stmt, 1, room->practice_id);
+                    sqlite3_bind_int(map_stmt, 2, qid);
+                    sqlite3_bind_int(map_stmt, 3, idx);
+                    sqlite3_step(map_stmt);
+                    sqlite3_finalize(map_stmt);
+                }
+                
+                idx++;
+            }
+            sqlite3_finalize(q_stmt);
+            room->num_questions = idx;
+        }
+    }
+
     if (room->num_questions == 0) {
         char response[] = "JOIN_PRACTICE_FAIL|No questions in practice room\n";
         send(socket_fd, response, strlen(response), 0);
@@ -431,28 +459,41 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
                                  "JOIN_PRACTICE_OK|%d|%s|%d|%d|%d|%d|",
                                  practice_id, room->room_name, room->time_limit, 
                                  room->show_answers, room->num_questions, session->session_id);
-            
-            // Send questions with answers if available
+
+            // Load questions from practice_questions table based on mapping
             for (int j = 0; j < room->num_questions; j++) {
                 int qid = room->question_ids[j];
-                Question *q = NULL;
-                for (int k = 0; k < server_data.question_count; k++) {
-                    if (server_data.questions[k].id == qid) {
-                        q = &server_data.questions[k];
-                        break;
+                sqlite3_stmt *q_stmt = NULL;
+                const char *sql_q =
+                    "SELECT question_text, option_a, option_b, option_c, option_d, difficulty "
+                    "FROM practice_questions WHERE id = ?";
+
+                if (sqlite3_prepare_v2(db, sql_q, -1, &q_stmt, NULL) == SQLITE_OK) {
+                    sqlite3_bind_int(q_stmt, 1, qid);
+                    if (sqlite3_step(q_stmt) == SQLITE_ROW) {
+                        const char *q_text = (const char *)sqlite3_column_text(q_stmt, 0);
+                        const char *opt_a = (const char *)sqlite3_column_text(q_stmt, 1);
+                        const char *opt_b = (const char *)sqlite3_column_text(q_stmt, 2);
+                        const char *opt_c = (const char *)sqlite3_column_text(q_stmt, 3);
+                        const char *opt_d = (const char *)sqlite3_column_text(q_stmt, 4);
+                        const char *difficulty = (const char *)sqlite3_column_text(q_stmt, 5);
+
+                        offset += snprintf(response + offset, sizeof(response) - offset,
+                                          "%d~%s~%s~%s~%s~%s~%s~%d",
+                                          qid,
+                                          q_text ? q_text : "",
+                                          opt_a ? opt_a : "",
+                                          opt_b ? opt_b : "",
+                                          opt_c ? opt_c : "",
+                                          opt_d ? opt_d : "",
+                                          difficulty ? difficulty : "",
+                                          session->answers[j]);
+
+                        if (j < room->num_questions - 1) {
+                            offset += snprintf(response + offset, sizeof(response) - offset, "|");
+                        }
                     }
-                }
-                
-                if (q) {
-                    offset += snprintf(response + offset, sizeof(response) - offset,
-                                      "%d~%s~%s~%s~%s~%s~%s~%d",
-                                      q->id, q->text, q->options[0], q->options[1], 
-                                      q->options[2], q->options[3], q->difficulty,
-                                      session->answers[j]);
-                    
-                    if (j < room->num_questions - 1) {
-                        offset += snprintf(response + offset, sizeof(response) - offset, "|");
-                    }
+                    sqlite3_finalize(q_stmt);
                 }
             }
             
@@ -518,26 +559,39 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
                          practice_id, room->room_name, room->time_limit, 
                          room->show_answers, room->num_questions, session_id);
     
-    // Send questions
+    // Send questions loaded from practice_questions table
     for (int i = 0; i < room->num_questions; i++) {
         int qid = room->question_ids[i];
-        Question *q = NULL;
-        for (int j = 0; j < server_data.question_count; j++) {
-            if (server_data.questions[j].id == qid) {
-                q = &server_data.questions[j];
-                break;
+        sqlite3_stmt *q_stmt = NULL;
+        const char *sql_q =
+            "SELECT question_text, option_a, option_b, option_c, option_d, difficulty "
+            "FROM practice_questions WHERE id = ?";
+
+        if (sqlite3_prepare_v2(db, sql_q, -1, &q_stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(q_stmt, 1, qid);
+            if (sqlite3_step(q_stmt) == SQLITE_ROW) {
+                const char *q_text = (const char *)sqlite3_column_text(q_stmt, 0);
+                const char *opt_a = (const char *)sqlite3_column_text(q_stmt, 1);
+                const char *opt_b = (const char *)sqlite3_column_text(q_stmt, 2);
+                const char *opt_c = (const char *)sqlite3_column_text(q_stmt, 3);
+                const char *opt_d = (const char *)sqlite3_column_text(q_stmt, 4);
+                const char *difficulty = (const char *)sqlite3_column_text(q_stmt, 5);
+
+                offset += snprintf(response + offset, sizeof(response) - offset,
+                                  "%d~%s~%s~%s~%s~%s~%s~-1",
+                                  qid,
+                                  q_text ? q_text : "",
+                                  opt_a ? opt_a : "",
+                                  opt_b ? opt_b : "",
+                                  opt_c ? opt_c : "",
+                                  opt_d ? opt_d : "",
+                                  difficulty ? difficulty : "");
+
+                if (i < room->num_questions - 1) {
+                    offset += snprintf(response + offset, sizeof(response) - offset, "|");
+                }
             }
-        }
-        
-        if (q) {
-            offset += snprintf(response + offset, sizeof(response) - offset,
-                              "%d~%s~%s~%s~%s~%s~%s~-1",
-                              q->id, q->text, q->options[0], q->options[1], 
-                              q->options[2], q->options[3], q->difficulty);
-            
-            if (i < room->num_questions - 1) {
-                offset += snprintf(response + offset, sizeof(response) - offset, "|");
-            }
+            sqlite3_finalize(q_stmt);
         }
     }
     
@@ -587,25 +641,31 @@ void submit_practice_answer(int socket_fd, int user_id, int practice_id, int que
         return;
     }
     
-    // Get the question
+    // Get the question id for this index
     int question_id = room->question_ids[question_num];
-    Question *q = NULL;
-    for (int i = 0; i < server_data.question_count; i++) {
-        if (server_data.questions[i].id == question_id) {
-            q = &server_data.questions[i];
-            break;
+
+    // Look up correct answer from practice_questions in database
+    int correct_answer = -1;
+    sqlite3_stmt *stmt_q = NULL;
+    const char *sql_q = "SELECT correct_answer FROM practice_questions WHERE id = ? AND practice_id = ?";
+    if (sqlite3_prepare_v2(db, sql_q, -1, &stmt_q, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt_q, 1, question_id);
+        sqlite3_bind_int(stmt_q, 2, practice_id);
+        if (sqlite3_step(stmt_q) == SQLITE_ROW) {
+            correct_answer = sqlite3_column_int(stmt_q, 0);
         }
+        sqlite3_finalize(stmt_q);
     }
-    
-    if (q == NULL) {
+
+    if (correct_answer < 0) {
         char response[] = "SUBMIT_PRACTICE_ANSWER_FAIL|Question not found\n";
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
-    
+
     // Check if answer is correct
-    int is_correct = (answer == q->correct_answer) ? 1 : 0;
+    int is_correct = (answer == correct_answer) ? 1 : 0;
     
     // Update session
     session->answers[question_num] = answer;
@@ -749,25 +809,40 @@ void view_practice_results(int socket_fd, int user_id, int practice_id) {
     
     for (int i = 0; i < room->num_questions; i++) {
         int qid = room->question_ids[i];
-        Question *q = NULL;
-        for (int j = 0; j < server_data.question_count; j++) {
-            if (server_data.questions[j].id == qid) {
-                q = &server_data.questions[j];
-                break;
+
+        // Load question details from practice_questions
+        sqlite3_stmt *stmt_q = NULL;
+        const char *sql_q =
+            "SELECT question_text, option_a, option_b, option_c, option_d, correct_answer "
+            "FROM practice_questions WHERE id = ?";
+
+        if (sqlite3_prepare_v2(db, sql_q, -1, &stmt_q, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt_q, 1, qid);
+            if (sqlite3_step(stmt_q) == SQLITE_ROW) {
+                const char *q_text = (const char *)sqlite3_column_text(stmt_q, 0);
+                const char *opt_a = (const char *)sqlite3_column_text(stmt_q, 1);
+                const char *opt_b = (const char *)sqlite3_column_text(stmt_q, 2);
+                const char *opt_c = (const char *)sqlite3_column_text(stmt_q, 3);
+                const char *opt_d = (const char *)sqlite3_column_text(stmt_q, 4);
+                int correct_answer = sqlite3_column_int(stmt_q, 5);
+
+                offset += snprintf(response + offset, sizeof(response) - offset,
+                                  "%d~%s~%s~%s~%s~%s~%d~%d~%d",
+                                  qid,
+                                  q_text ? q_text : "",
+                                  opt_a ? opt_a : "",
+                                  opt_b ? opt_b : "",
+                                  opt_c ? opt_c : "",
+                                  opt_d ? opt_d : "",
+                                  correct_answer,
+                                  session->answers[i],
+                                  session->is_correct[i]);
+
+                if (i < room->num_questions - 1) {
+                    offset += snprintf(response + offset, sizeof(response) - offset, "|");
+                }
             }
-        }
-        
-        if (q) {
-            offset += snprintf(response + offset, sizeof(response) - offset,
-                              "%d~%s~%s~%s~%s~%s~%d~%d~%d",
-                              q->id, q->text, q->options[0], q->options[1], 
-                              q->options[2], q->options[3], 
-                              q->correct_answer, session->answers[i], 
-                              session->is_correct[i]);
-            
-            if (i < room->num_questions - 1) {
-                offset += snprintf(response + offset, sizeof(response) - offset, "|");
-            }
+            sqlite3_finalize(stmt_q);
         }
     }
     

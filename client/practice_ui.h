@@ -39,6 +39,7 @@ typedef struct {
     time_t start_time;
     int is_finished;
     int score;
+    guint timer_id;  // Timer ID for countdown
 } PracticeSession;
 
 extern PracticeSession current_practice;

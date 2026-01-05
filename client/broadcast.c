@@ -14,6 +14,7 @@ extern ClientData client;
 static RoomStartedCallback room_started_callback = NULL;
 static RoomCreatedCallback room_created_callback = NULL;
 static RoomDeletedCallback room_deleted_callback = NULL;
+static PracticeClosedCallback practice_closed_callback = NULL;
 
 // Listener state
 static guint timer_id = 0;
@@ -39,7 +40,8 @@ static void set_blocking(int sockfd) {
 static int is_broadcast_message(const char *message) {
     return (strncmp(message, "ROOM_STARTED", 12) == 0 ||
             strncmp(message, "ROOM_CREATED", 12) == 0 ||
-            strncmp(message, "ROOM_DELETED", 12) == 0);
+            strncmp(message, "ROOM_DELETED", 12) == 0 ||
+            strncmp(message, "PRACTICE_CLOSED", 15) == 0);
 }
 
 // Parse and handle broadcast messages
@@ -63,6 +65,23 @@ static void handle_broadcast_message(const char *message) {
             
             printf("[BROADCAST] Room %d started at %ld\n", room_id, start_time);
             room_started_callback(room_id, start_time);
+        }
+    }
+    // Parse PRACTICE_CLOSED|practice_id|room_name
+    else if (strncmp(message, "PRACTICE_CLOSED", 15) == 0) {
+        char msg_copy[512];
+        strncpy(msg_copy, message, sizeof(msg_copy) - 1);
+        msg_copy[sizeof(msg_copy) - 1] = '\0';
+
+        char *ptr = msg_copy;
+        strtok(ptr, "|"); // Skip "PRACTICE_CLOSED"
+        char *practice_id_str = strtok(NULL, "|");
+        char *room_name = strtok(NULL, "|");
+
+        if (practice_id_str && room_name && practice_closed_callback) {
+            int practice_id = atoi(practice_id_str);
+            printf("[BROADCAST] Practice room %d closed: %s\n", practice_id, room_name);
+            practice_closed_callback(practice_id, room_name);
         }
     }
     // Parse ROOM_CREATED|room_id|room_name|duration
@@ -212,4 +231,8 @@ void broadcast_on_room_created(RoomCreatedCallback callback) {
 // Register callback for ROOM_DELETED
 void broadcast_on_room_deleted(RoomDeletedCallback callback) {
     room_deleted_callback = callback;
+}
+
+void broadcast_on_practice_closed(PracticeClosedCallback callback) {
+    practice_closed_callback = callback;
 }

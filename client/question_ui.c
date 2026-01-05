@@ -650,7 +650,7 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
     gtk_box_pack_start(GTK_BOX(button_box), add_btn, TRUE, TRUE, 0);
     g_signal_connect(add_btn, "clicked", G_CALLBACK(show_add_practice_question_dialog), GINT_TO_POINTER(practice_id));
     
-    GtkWidget *import_btn = gtk_button_new_with_label("mport from CSV");
+    GtkWidget *import_btn = gtk_button_new_with_label("Import from CSV");
     style_button(import_btn, "#3498db");
     gtk_box_pack_start(GTK_BOX(button_box), import_btn, TRUE, TRUE, 0);
     g_signal_connect(import_btn, "clicked", G_CALLBACK(show_import_practice_csv_dialog), GINT_TO_POINTER(practice_id));

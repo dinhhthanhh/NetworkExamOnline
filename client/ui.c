@@ -111,14 +111,15 @@ void create_main_menu()
         GtkWidget *test_mode_btn = gtk_button_new_with_label("Test Mode");
         GtkWidget *practice_btn = gtk_button_new_with_label("Practice Mode");
         GtkWidget *stats_btn = gtk_button_new_with_label("My Statistics");
-        GtkWidget *leaderboard_btn = gtk_button_new_with_label("Leaderboard");
+        GtkWidget *leaderboard_btn = gtk_button_new_with_label("Ranking");
         GtkWidget *change_pass_btn = gtk_button_new_with_label("Change Password");
         GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
 
         style_button(test_mode_btn, "#3498db");
         style_button(practice_btn, "#9b59b6");
         style_button(stats_btn, "#e74c3c");
-        style_button(leaderboard_btn, "#f39c12");
+        // Ranking: dùng màu xanh lá riêng để khác Change Password
+        style_button(leaderboard_btn, "#2ecc71");
         style_button(change_pass_btn, "#f39c12");
         style_button(logout_btn, "#95a5a6");
 

@@ -13,6 +13,7 @@ void get_leaderboard(int socket_fd, int limit)
   snprintf(query, sizeof(query),
            "SELECT u.id, u.username, COALESCE(SUM(r.score), 0) as total_score, COUNT(r.id) as tests_completed "
            "FROM users u LEFT JOIN results r ON u.id = r.user_id "
+           "WHERE u.role != 'admin' "
            "GROUP BY u.id ORDER BY total_score DESC LIMIT %d;",
            limit);
 

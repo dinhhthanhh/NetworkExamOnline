@@ -3,7 +3,7 @@
 
 void show_view(GtkWidget *view)
 {
-    if (current_view)
+    if (current_view && GTK_IS_WIDGET(current_view))
         gtk_container_remove(GTK_CONTAINER(main_window), current_view);
     current_view = view;
     gtk_container_add(GTK_CONTAINER(main_window), view);
@@ -163,7 +163,7 @@ gboolean update_timer(gpointer data)
         int mins = time_remaining / 60;
         int secs = time_remaining % 60;
         char time_str[50];
-        snprintf(time_str, sizeof(time_str), "⏱️ Time: %02d:%02d", mins, secs);
+        snprintf(time_str, sizeof(time_str), "Time: %02d:%02d", mins, secs);
         gtk_label_set_text(GTK_LABEL(timer_label), time_str);
         if (time_remaining == 0)
         {

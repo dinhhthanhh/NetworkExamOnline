@@ -8,16 +8,24 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gdk/gdk.h>
+#include <fcntl.h>
+
+// Idle callback for safe refresh
+static gboolean idle_refresh_rooms(gpointer user_data) {
+    if (rooms_list != NULL && GTK_IS_LIST_BOX(rooms_list)) {
+        printf("[ROOM_UI] Idle refresh: loading rooms list\n");
+        load_rooms_list();
+    }
+    return FALSE; // Remove idle callback after execution
+}
 
 // Callback when ROOM_CREATED broadcast received
 static void on_room_created_broadcast(int room_id, const char *room_name, int duration) {
     printf("[ROOM_UI] Received ROOM_CREATED: %d - %s (%d min)\n", room_id, room_name, duration);
     
-    // Auto refresh room list
-    if (rooms_list != NULL) {
-        printf("[ROOM_UI] Auto-refreshing room list\n");
-        load_rooms_list();
-    }
+    // Schedule refresh in GTK main loop to avoid race conditions
+    // This ensures the current event handler completes before refresh
+    g_idle_add(idle_refresh_rooms, NULL);
 }
 
 void on_room_button_clicked(GtkWidget *button, gpointer data)
@@ -31,8 +39,8 @@ void on_room_button_clicked(GtkWidget *button, gpointer data)
         
         // Cập nhật label hiển thị phòng đã chọn
         char markup[256];
-        snprintf(markup, sizeof(markup), 
-                 "<span foreground='#27ae60' weight='bold'>✅ Selected: %s (ID: %d)</span>", 
+            snprintf(markup, sizeof(markup), 
+                     "<span foreground='#27ae60' weight='bold'>Selected: %s (ID: %d)</span>", 
                  room_name, selected_room_id);
         gtk_label_set_markup(GTK_LABEL(selected_room_label), markup);
     }
@@ -40,17 +48,34 @@ void on_room_button_clicked(GtkWidget *button, gpointer data)
 
 void load_rooms_list()
 {
+    // Validate socket before proceeding
+    if (client.socket_fd <= 0) {
+        printf("[ROOM_UI] Invalid socket, cannot load rooms\n");
+        return;
+    }
+    
+    // Ensure socket is in blocking mode
+    int flags = fcntl(client.socket_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+        printf("[ROOM_UI] Socket set to blocking mode\n");  // ← LOG
+    }
+    
     // Reset selected room
     selected_room_id = -1;
-    gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                        "<span foreground='#e74c3c'>❌ No room selected</span>");
+    if (selected_room_label && GTK_IS_LABEL(selected_room_label)) {
+        gtk_label_set_markup(GTK_LABEL(selected_room_label), 
+                            "<span foreground='#e74c3c'>No room selected</span>");
+    }
     
     // Xóa hết các row cũ
-    GList *children, *iter;
-    children = gtk_container_get_children(GTK_CONTAINER(rooms_list));
-    for (iter = children; iter != NULL; iter = g_list_next(iter))
-        gtk_widget_destroy(GTK_WIDGET(iter->data));
-    g_list_free(children);
+    if (rooms_list && GTK_IS_LIST_BOX(rooms_list)) {
+        GList *children, *iter;
+        children = gtk_container_get_children(GTK_CONTAINER(rooms_list));
+        for (iter = children; iter != NULL; iter = g_list_next(iter))
+            gtk_widget_destroy(GTK_WIDGET(iter->data));
+        g_list_free(children);
+    }
 
     // Flush old responses before new request
     flush_socket_buffer(client.socket_fd);
@@ -78,8 +103,8 @@ void load_rooms_list()
 
                 // Tạo button với thông tin phòng
                 char button_label[256];
-                snprintf(button_label, sizeof(button_label), 
-                        "🏠 %s | ⏱️ %dmin | 👤 %s", 
+                    snprintf(button_label, sizeof(button_label), 
+                            "%s | %dmin | %s", 
                         room_name, time_limit, owner);
                 
                 GtkWidget *btn = gtk_button_new_with_label(button_label);
@@ -127,7 +152,7 @@ void load_rooms_list()
         {
             GtkWidget *label = gtk_label_new(NULL);
             gtk_label_set_markup(GTK_LABEL(label), 
-                               "<span foreground='#95a5a6' size='large'>📭 No rooms available. Create one!</span>");
+                               "<span foreground='#95a5a6' size='large'>No rooms available. Create one!</span>");
             GtkWidget *row = gtk_list_box_row_new();
             gtk_container_add(GTK_CONTAINER(row), label);
             gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
@@ -137,7 +162,7 @@ void load_rooms_list()
     {
         GtkWidget *label = gtk_label_new(NULL);
         gtk_label_set_markup(GTK_LABEL(label), 
-                           "<span foreground='#e74c3c'>⚠️ Cannot load rooms. Check connection.</span>");
+                   "<span foreground='#e74c3c'>Cannot load rooms. Check connection.</span>");
         GtkWidget *row = gtk_list_box_row_new();
         gtk_container_add(GTK_CONTAINER(row), label);
         gtk_list_box_insert(GTK_LIST_BOX(rooms_list), row, -1);
@@ -151,9 +176,9 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
     if (selected_room_id < 0)
     {
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-                                                   "⚠️ Please select a room first!");
+                               GTK_DIALOG_DESTROY_WITH_PARENT,
+                               GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+                               "Please select a room first!");
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         return;
@@ -189,9 +214,9 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
             GtkWidget *error_dialog = gtk_message_dialog_new(
                 GTK_WINDOW(main_window),
                 GTK_DIALOG_DESTROY_WITH_PARENT,
-                GTK_MESSAGE_ERROR,
-                GTK_BUTTONS_OK,
-                "⏰ Time Expired");
+                    GTK_MESSAGE_ERROR,
+                    GTK_BUTTONS_OK,
+                    "Time Expired");
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
                 "Your exam session has expired. You cannot resume.");
             gtk_dialog_run(GTK_DIALOG(error_dialog));
@@ -204,9 +229,9 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
             GtkWidget *error_dialog = gtk_message_dialog_new(
                 GTK_WINDOW(main_window),
                 GTK_DIALOG_DESTROY_WITH_PARENT,
-                GTK_MESSAGE_INFO,
-                GTK_BUTTONS_OK,
-                "✅ Already Completed");
+                    GTK_MESSAGE_INFO,
+                    GTK_BUTTONS_OK,
+                    "Already Completed");
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
                 "You have already completed this exam.");
             gtk_dialog_run(GTK_DIALOG(error_dialog));
@@ -216,6 +241,13 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         
         // Không có session cũ - BEGIN_EXAM trực tiếp (không cần dialog)
         printf("[ROOM_UI] Starting new exam session\n");
+        
+        // CRITICAL: Stop broadcast listener before entering exam
+        if (broadcast_is_listening()) {
+            broadcast_stop_listener();
+            printf("[ROOM_UI] Stopped broadcast listener before exam\n");
+        }
+        
         char begin_cmd[128];
         snprintf(begin_cmd, sizeof(begin_cmd), "BEGIN_EXAM|%d\n", selected_room_id);
         send_message(begin_cmd);
@@ -231,9 +263,9 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
             GtkWidget *error_dialog = gtk_message_dialog_new(
                 GTK_WINDOW(main_window),
                 GTK_DIALOG_DESTROY_WITH_PARENT,
-                GTK_MESSAGE_ERROR,
-                GTK_BUTTONS_OK,
-                "❌ Failed to start exam:\n\n%s",
+                    GTK_MESSAGE_ERROR,
+                    GTK_BUTTONS_OK,
+                    "Failed to start exam:\n\n%s",
                 exam_buffer[0] ? exam_buffer : "No response");
             gtk_dialog_run(GTK_DIALOG(error_dialog));
             gtk_widget_destroy(error_dialog);
@@ -242,8 +274,8 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
     else
     {
         char error_msg[BUFFER_SIZE + 50];
-        snprintf(error_msg, sizeof(error_msg), 
-                "❌ Failed to join room!\n\nServer response: %s", 
+            snprintf(error_msg, sizeof(error_msg), 
+                "Failed to join room!\n\nServer response: %s", 
                 buffer[0] ? buffer : "No response");
         
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -308,7 +340,7 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
                 GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                                                   "✅ Room created!");
+                                                                   "Room created!");
                 gtk_dialog_run(GTK_DIALOG(success_dialog));
                 gtk_widget_destroy(success_dialog);
 
@@ -322,6 +354,16 @@ void on_create_room_clicked(GtkWidget *widget, gpointer data)
 
 void create_test_mode_screen()
 {
+    // CRITICAL: Stop any existing broadcast listener to clean up old callbacks
+    if (broadcast_is_listening()) {
+        broadcast_stop_listener();
+        printf("[ROOM_UI] Stopped old broadcast listener before creating new screen\n");
+    }
+    
+    // Reset global widget pointers
+    rooms_list = NULL;
+    selected_room_label = NULL;
+    
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_top(vbox, 20);
     gtk_widget_set_margin_start(vbox, 20);
@@ -330,7 +372,7 @@ void create_test_mode_screen()
     // Title
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-        "<span foreground='#2c3e50' weight='bold' size='20480'>🎯 TEST MODE - Select a Room</span>");
+        "<span foreground='#2c3e50' weight='bold' size='20480'>TEST MODE - Select a Room</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -346,9 +388,9 @@ void create_test_mode_screen()
         style_button(create_btn, "#27ae60");
     }
     
-    GtkWidget *join_btn = gtk_button_new_with_label("🚺 JOIN ROOM");
-    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *join_btn = gtk_button_new_with_label("JOIN ROOM");
+    GtkWidget *refresh_btn = gtk_button_new_with_label("REFRESH");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
 
     style_button(join_btn, "#3498db");
     style_button(refresh_btn, "#f39c12");
@@ -365,7 +407,7 @@ void create_test_mode_screen()
     // Label phòng đang chọn
     selected_room_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(selected_room_label), 
-                        "<span foreground='#e74c3c' size='large'>❌ No room selected</span>");
+                        "<span foreground='#e74c3c' size='large'>No room selected</span>");
     gtk_box_pack_start(GTK_BOX(vbox), selected_room_label, FALSE, FALSE, 5);
 
     GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -384,11 +426,6 @@ void create_test_mode_screen()
 
     // Load danh sách phòng
     load_rooms_list();
-    
-    // Start listening for ROOM_CREATED broadcasts
-    broadcast_on_room_created(on_room_created_broadcast);
-    broadcast_start_listener();
-    printf("[ROOM_UI] Started listening for ROOM_CREATED broadcasts\n");
 
     // Signal connect
     if (create_btn) {
@@ -398,5 +435,11 @@ void create_test_mode_screen()
     g_signal_connect(refresh_btn, "clicked", G_CALLBACK(load_rooms_list), NULL);
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
 
+    // CRITICAL: Show UI FIRST before starting broadcast listener
     show_view(vbox);
+    
+    // Start listening for ROOM_CREATED broadcasts AFTER UI is shown
+    broadcast_on_room_created(on_room_created_broadcast);
+    broadcast_start_listener();
+    printf("[ROOM_UI] Started listening for ROOM_CREATED broadcasts\n");
 }

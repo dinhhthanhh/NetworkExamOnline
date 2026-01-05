@@ -434,6 +434,52 @@ void broadcast_to_room_participants(int room_id, const char *message) {
   pthread_mutex_unlock(&server_data.lock);
 }
 
+// Broadcast to room participants except specified user (e.g., admin)
+void broadcast_to_room_participants_except(int room_id, const char *message, int exclude_user_id) {
+  pthread_mutex_lock(&server_data.lock);
+  
+  // Tìm room trong in-memory
+  int room_idx = -1;
+  for (int i = 0; i < server_data.room_count; i++) {
+    if (server_data.rooms[i].room_id == room_id) {
+      room_idx = i;
+      break;
+    }
+  }
+  
+  if (room_idx == -1) {
+    pthread_mutex_unlock(&server_data.lock);
+    return;
+  }
+  
+  // Gửi message đến tất cả participants EXCEPT exclude_user_id
+  TestRoom *room = &server_data.rooms[room_idx];
+  int sent_count = 0;
+  for (int i = 0; i < room->participant_count; i++) {
+    int user_id = room->participants[i];
+    
+    // Skip excluded user (admin)
+    if (user_id == exclude_user_id) {
+      continue;
+    }
+    
+    // Tìm socket_fd của user
+    for (int j = 0; j < server_data.user_count; j++) {
+      if (server_data.users[j].user_id == user_id && 
+          server_data.users[j].is_online == 1) {
+        send(server_data.users[j].socket_fd, message, strlen(message), 0);
+        printf("[BROADCAST] Sent to user %d (room %d, excluded %d): %s", 
+               user_id, room_id, exclude_user_id, message);
+        sent_count++;
+        break;
+      }
+    }
+  }
+  
+  printf("[BROADCAST] Total sent: %d participants (room %d)\n", sent_count, room_id);
+  pthread_mutex_unlock(&server_data.lock);
+}
+
 // Broadcast thông báo room mới được tạo (tạm thời gửi cho tất cả online users)
 // TODO: Chỉ gửi cho users đang xem LIST_ROOMS
 void broadcast_room_created(int room_id, const char *room_name, int duration) {

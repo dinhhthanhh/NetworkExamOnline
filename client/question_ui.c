@@ -28,7 +28,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
 
     char title_text[128];
     snprintf(title_text, sizeof(title_text), 
-             "<span foreground='#2c3e50' weight='bold' size='20480'>📝 Exam Room Questions (ID: %d)</span>", 
+             "<span foreground='#2c3e50' weight='bold' size='20480'>Exam Room Questions (ID: %d)</span>", 
              room_id);
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), title_text);
@@ -40,12 +40,12 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
     // Button box for actions
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
-    GtkWidget *add_btn = gtk_button_new_with_label("➕ Add Question Manually");
+    GtkWidget *add_btn = gtk_button_new_with_label("Add Question Manually");
     style_button(add_btn, "#27ae60");
     gtk_box_pack_start(GTK_BOX(button_box), add_btn, TRUE, TRUE, 0);
     g_signal_connect(add_btn, "clicked", G_CALLBACK(show_add_exam_question_dialog), GINT_TO_POINTER(room_id));
     
-    GtkWidget *import_btn = gtk_button_new_with_label("📂 Import from CSV");
+    GtkWidget *import_btn = gtk_button_new_with_label("Import from CSV");
     style_button(import_btn, "#3498db");
     gtk_box_pack_start(GTK_BOX(button_box), import_btn, TRUE, TRUE, 0);
     g_signal_connect(import_btn, "clicked", G_CALLBACK(show_import_exam_csv_dialog), GINT_TO_POINTER(room_id));
@@ -142,7 +142,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
                     "<b>Q%d:</b> %s\n"
                     "<span size='small'>A: %s | B: %s | C: %s | D: %s\n"
                     "✔️ Correct: <span foreground='green'><b>%c</b></span> | "
-                    "📊 %s | 📁 %s</span>",
+                    "%s | %s</span>",
                     q_count + 1, text, optA, optB, optC, optD, 
                     correct_letter, difficulty, category);
             
@@ -153,7 +153,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
             gtk_box_pack_start(GTK_BOX(hbox), info_label, TRUE, TRUE, 0);
 
             // Edit button
-            GtkWidget *edit_btn = gtk_button_new_with_label("✏️ Edit");
+            GtkWidget *edit_btn = gtk_button_new_with_label("Edit");
             style_button(edit_btn, "#f39c12");
             gtk_widget_set_size_request(edit_btn, 100, 35);
             g_signal_connect(edit_btn, "clicked", 
@@ -167,7 +167,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
         }
         
         if (q_count == 0) {
-            GtkWidget *empty_label = gtk_label_new("📭 No questions in this room yet. Add some!");
+            GtkWidget *empty_label = gtk_label_new("No questions in this room yet. Add some!");
             gtk_widget_set_margin_top(empty_label, 50);
             gtk_widget_set_margin_bottom(empty_label, 50);
             gtk_container_add(GTK_CONTAINER(list_box), empty_label);
@@ -175,7 +175,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
         
         free(buffer_copy);
     } else {
-        GtkWidget *error_label = gtk_label_new("❌ Failed to load questions");
+        GtkWidget *error_label = gtk_label_new("Failed to load questions");
         gtk_widget_set_margin_top(error_label, 50);
         gtk_widget_set_margin_bottom(error_label, 50);
         gtk_container_add(GTK_CONTAINER(list_box), error_label);
@@ -183,7 +183,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
 
     // Back button
     GtkWidget *back_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     style_button(back_btn, "#95a5a6");
     gtk_box_pack_start(GTK_BOX(back_box), back_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), back_box, FALSE, FALSE, 0);
@@ -633,7 +633,7 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
 
     char title_text[128];
     snprintf(title_text, sizeof(title_text), 
-             "<span foreground='#9b59b6' weight='bold' size='20480'>🎯 Practice Room Questions (ID: %d)</span>", 
+             "<span foreground='#9b59b6' weight='bold' size='20480'>Practice Room Questions (ID: %d)</span>", 
              practice_id);
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), title_text);
@@ -645,12 +645,12 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
     // Button box for actions
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
-    GtkWidget *add_btn = gtk_button_new_with_label("➕ Add Question Manually");
+    GtkWidget *add_btn = gtk_button_new_with_label("Add Question Manually");
     style_button(add_btn, "#27ae60");
     gtk_box_pack_start(GTK_BOX(button_box), add_btn, TRUE, TRUE, 0);
     g_signal_connect(add_btn, "clicked", G_CALLBACK(show_add_practice_question_dialog), GINT_TO_POINTER(practice_id));
     
-    GtkWidget *import_btn = gtk_button_new_with_label("📂 Import from CSV");
+    GtkWidget *import_btn = gtk_button_new_with_label("mport from CSV");
     style_button(import_btn, "#3498db");
     gtk_box_pack_start(GTK_BOX(button_box), import_btn, TRUE, TRUE, 0);
     g_signal_connect(import_btn, "clicked", G_CALLBACK(show_import_practice_csv_dialog), GINT_TO_POINTER(practice_id));
@@ -718,7 +718,7 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
                     "<b>Q%d:</b> %s\n"
                     "<span size='small'>A: %s | B: %s | C: %s | D: %s\n"
                     "✔️ Correct: <span foreground='green'><b>%c</b></span> | "
-                    "📊 %s | 📁 %s</span>",
+                    "%s | %s</span>",
                     q_count + 1, text, optA, optB, optC, optD, 
                     correct_letter, difficulty ? difficulty : "N/A", category ? category : "N/A");
             
@@ -729,7 +729,7 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
             gtk_box_pack_start(GTK_BOX(hbox), info_label, TRUE, TRUE, 0);
 
             // Edit button
-            GtkWidget *edit_btn = gtk_button_new_with_label("✏️ Edit");
+            GtkWidget *edit_btn = gtk_button_new_with_label("Edit");
             style_button(edit_btn, "#f39c12");
             gtk_widget_set_size_request(edit_btn, 100, 35);
             g_signal_connect(edit_btn, "clicked", 
@@ -743,13 +743,13 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
         }
         
         if (q_count == 0) {
-            GtkWidget *empty_label = gtk_label_new("📭 No questions in this practice room yet. Add some!");
+            GtkWidget *empty_label = gtk_label_new("No questions in this practice room yet. Add some!");
             gtk_widget_set_margin_top(empty_label, 50);
             gtk_widget_set_margin_bottom(empty_label, 50);
             gtk_container_add(GTK_CONTAINER(list_box), empty_label);
         }
     } else {
-        GtkWidget *error_label = gtk_label_new("❌ Failed to load questions");
+        GtkWidget *error_label = gtk_label_new("Failed to load questions");
         gtk_widget_set_margin_top(error_label, 50);
         gtk_widget_set_margin_bottom(error_label, 50);
         gtk_container_add(GTK_CONTAINER(list_box), error_label);
@@ -757,7 +757,7 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
 
     // Back button
     GtkWidget *back_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     style_button(back_btn, "#95a5a6");
     gtk_box_pack_start(GTK_BOX(back_box), back_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), back_box, FALSE, FALSE, 0);

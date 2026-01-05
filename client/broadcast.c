@@ -104,7 +104,7 @@ static void handle_broadcast_message(const char *message) {
     }
 }
 
-// GTK timeout callback - polls for broadcasts using non-blocking I/O
+// GTK timeout callback - periodically polls the socket for broadcast messages using non-blocking I/O
 static gboolean poll_broadcasts(gpointer user_data) {
     if (!is_listening) {
         return FALSE; // Stop timer
@@ -160,7 +160,7 @@ static gboolean poll_broadcasts(gpointer user_data) {
     return TRUE; // Continue timer
 }
 
-// Start broadcast listener
+// Start periodic listener that polls for ROOM_* broadcasts from the server
 void broadcast_start_listener(void) {
     if (is_listening) {
         printf("[BROADCAST] Listener already running\n");
@@ -175,7 +175,7 @@ void broadcast_start_listener(void) {
     printf("[BROADCAST] Listener started (polling every 200ms with non-blocking I/O)\n");
 }
 
-// Stop broadcast listener
+// Stop the broadcast listener and restore blocking mode on the socket
 void broadcast_stop_listener(void) {
     if (!is_listening) {
         return;
@@ -194,7 +194,7 @@ void broadcast_stop_listener(void) {
     printf("[BROADCAST] Listener stopped\n");
 }
 
-// Check if listening
+// Check if the broadcast listener is currently running
 int broadcast_is_listening(void) {
     return is_listening;
 }

@@ -4,7 +4,7 @@
 #include "net.h"
 #include <string.h>
 
-// Structure to hold question selection data
+// Structure to hold widgets used for selecting question counts by difficulty
 typedef struct {
     GtkWidget *easy_spin;
     GtkWidget *medium_spin;
@@ -12,7 +12,7 @@ typedef struct {
     GtkWidget *total_label;
 } QuestionSelectionData;
 
-// Callback when difficulty spinners change
+// Update the total question count label whenever any difficulty spinner changes
 void on_difficulty_changed(GtkSpinButton *spin_button, gpointer user_data) {
     QuestionSelectionData *qs_data = (QuestionSelectionData *)user_data;
     
@@ -27,6 +27,7 @@ void on_difficulty_changed(GtkSpinButton *spin_button, gpointer user_data) {
     gtk_label_set_markup(GTK_LABEL(qs_data->total_label), total_text);
 }
 
+// Show dialog that lets admin configure a new exam room and question distribution
 void create_exam_room_with_questions(GtkWidget *widget, gpointer user_data) {
     GtkWidget *dialog = gtk_dialog_new_with_buttons(
         "Create Exam Room with Questions",

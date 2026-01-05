@@ -88,7 +88,7 @@ void show_practice_list_screen(void) {
     // Title
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-        "<span foreground='#2c3e50' weight='bold' size='20000'>🎯 PRACTICE ROOMS</span>");
+        "<span foreground='#2c3e50' weight='bold' size='20000'>PRACTICE ROOMS</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
     
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -155,7 +155,7 @@ void show_practice_list_screen(void) {
     }
     
     if (practice_room_count == 0) {
-        GtkWidget *no_rooms = gtk_label_new("📭 No practice rooms available");
+        GtkWidget *no_rooms = gtk_label_new("No practice rooms available");
         gtk_box_pack_start(GTK_BOX(list_box), no_rooms, TRUE, TRUE, 0);
     }
     
@@ -164,12 +164,12 @@ void show_practice_list_screen(void) {
     // Buttons
     GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
-    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
+    GtkWidget *refresh_btn = gtk_button_new_with_label("REFRESH");
     style_button(refresh_btn, "#3498db");
     g_signal_connect(refresh_btn, "clicked", G_CALLBACK(show_practice_list_screen), NULL);
     gtk_box_pack_start(GTK_BOX(btn_box), refresh_btn, TRUE, TRUE, 0);
     
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     style_button(back_btn, "#95a5a6");
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
     gtk_box_pack_start(GTK_BOX(btn_box), back_btn, TRUE, TRUE, 0);
@@ -287,7 +287,7 @@ void show_practice_room_screen(void) {
     // Title with room info
     char title_text[256];
     snprintf(title_text, sizeof(title_text),
-            "<span foreground='#2c3e50' weight='bold' size='18000'>🎯 %s</span>",
+            "<span foreground='#2c3e50' weight='bold' size='18000'>%s</span>",
             current_practice.room_name);
     
     GtkWidget *title = gtk_label_new(NULL);
@@ -396,7 +396,7 @@ void show_practice_room_screen(void) {
     GtkWidget *nav_btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
     if (current_practice.current_question > 0) {
-        GtkWidget *prev_btn = gtk_button_new_with_label("⬅️ Previous");
+        GtkWidget *prev_btn = gtk_button_new_with_label("Previous");
         style_button(prev_btn, "#3498db");
         g_signal_connect_swapped(prev_btn, "clicked",
             G_CALLBACK(gtk_spin_button_set_value),
@@ -418,12 +418,12 @@ void show_practice_room_screen(void) {
     // Action buttons
     GtkWidget *action_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
-    GtkWidget *finish_btn = gtk_button_new_with_label("✅ FINISH PRACTICE");
+    GtkWidget *finish_btn = gtk_button_new_with_label("FINISH PRACTICE");
     style_button(finish_btn, "#27ae60");
     g_signal_connect(finish_btn, "clicked", G_CALLBACK(on_finish_practice), NULL);
     gtk_box_pack_start(GTK_BOX(action_box), finish_btn, TRUE, TRUE, 0);
     
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ EXIT");
+    GtkWidget *back_btn = gtk_button_new_with_label("EXIT");
     style_button(back_btn, "#e74c3c");
     g_signal_connect(back_btn, "clicked", G_CALLBACK(show_practice_list_screen), NULL);
     gtk_box_pack_start(GTK_BOX(action_box), back_btn, TRUE, TRUE, 0);
@@ -519,12 +519,12 @@ void show_practice_results_screen(void) {
     // Action buttons
     GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
-    GtkWidget *restart_btn = gtk_button_new_with_label("🔄 PRACTICE AGAIN");
+    GtkWidget *restart_btn = gtk_button_new_with_label("PRACTICE AGAIN");
     style_button(restart_btn, "#3498db");
     g_signal_connect(restart_btn, "clicked", G_CALLBACK(on_restart_practice), NULL);
     gtk_box_pack_start(GTK_BOX(btn_box), restart_btn, TRUE, TRUE, 0);
     
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK TO LIST");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK TO LIST");
     style_button(back_btn, "#95a5a6");
     g_signal_connect(back_btn, "clicked", G_CALLBACK(show_practice_list_screen), NULL);
     gtk_box_pack_start(GTK_BOX(btn_box), back_btn, TRUE, TRUE, 0);
@@ -706,32 +706,32 @@ void show_manage_practice_rooms(void) {
         GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
         
         if (room->is_open) {
-            GtkWidget *close_btn = gtk_button_new_with_label("🔒 Close");
+            GtkWidget *close_btn = gtk_button_new_with_label("Close");
             style_button(close_btn, "#e74c3c");
             g_signal_connect(close_btn, "clicked", G_CALLBACK(on_close_practice_clicked),
                            GINT_TO_POINTER(room->practice_id));
             gtk_box_pack_start(GTK_BOX(btn_box), close_btn, TRUE, TRUE, 0);
         } else {
-            GtkWidget *open_btn = gtk_button_new_with_label("🔓 Open");
+            GtkWidget *open_btn = gtk_button_new_with_label("Open");
             style_button(open_btn, "#27ae60");
             g_signal_connect(open_btn, "clicked", G_CALLBACK(on_open_practice_clicked),
                            GINT_TO_POINTER(room->practice_id));
             gtk_box_pack_start(GTK_BOX(btn_box), open_btn, TRUE, TRUE, 0);
         }
         
-        GtkWidget *questions_btn = gtk_button_new_with_label("📝 Questions");
+        GtkWidget *questions_btn = gtk_button_new_with_label("Questions");
         style_button(questions_btn, "#9b59b6");
         g_signal_connect(questions_btn, "clicked", G_CALLBACK(show_practice_question_manager),
                        GINT_TO_POINTER(room->practice_id));
         gtk_box_pack_start(GTK_BOX(btn_box), questions_btn, TRUE, TRUE, 0);
         
-        GtkWidget *view_btn = gtk_button_new_with_label("👥 Members");
+        GtkWidget *view_btn = gtk_button_new_with_label("Members");
         style_button(view_btn, "#3498db");
         g_signal_connect(view_btn, "clicked", G_CALLBACK(on_view_participants_clicked),
                        GINT_TO_POINTER(room->practice_id));
         gtk_box_pack_start(GTK_BOX(btn_box), view_btn, TRUE, TRUE, 0);
         
-        GtkWidget *delete_btn = gtk_button_new_with_label("🗑️ DELETE");
+        GtkWidget *delete_btn = gtk_button_new_with_label("DELETE");
         style_button(delete_btn, "#c0392b");
         g_signal_connect(delete_btn, "clicked", G_CALLBACK(on_delete_practice_clicked),
                        GINT_TO_POINTER(room->practice_id));
@@ -744,13 +744,13 @@ void show_manage_practice_rooms(void) {
     }
     
     if (practice_room_count == 0) {
-        GtkWidget *no_rooms = gtk_label_new("📭 No practice rooms found");
+        GtkWidget *no_rooms = gtk_label_new("No practice rooms found");
         gtk_box_pack_start(GTK_BOX(list_box), no_rooms, TRUE, TRUE, 0);
     }
     
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
     
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK TO MAIN MENU");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK TO MAIN MENU");
     style_button(back_btn, "#95a5a6");
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), back_btn, FALSE, FALSE, 0);
@@ -860,7 +860,7 @@ void on_delete_practice_clicked(GtkWidget *widget, gpointer data) {
                                                GTK_DIALOG_DESTROY_WITH_PARENT,
                                                GTK_MESSAGE_QUESTION,
                                                GTK_BUTTONS_YES_NO,
-                                               "🗑️ Delete this practice room?");
+                                               "Delete this practice room?");
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
                                              "This action cannot be undone. All data will be permanently deleted.");
     int response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -883,7 +883,7 @@ void on_delete_practice_clicked(GtkWidget *widget, gpointer data) {
                                        GTK_DIALOG_DESTROY_WITH_PARENT,
                                        GTK_MESSAGE_INFO,
                                        GTK_BUTTONS_OK,
-                                       "✅ Practice room deleted successfully!");
+                                       "Practice room deleted successfully!");
         gtk_dialog_run(GTK_DIALOG(result_dialog));
         gtk_widget_destroy(result_dialog);
         
@@ -901,7 +901,7 @@ void on_delete_practice_clicked(GtkWidget *widget, gpointer data) {
                                        GTK_DIALOG_DESTROY_WITH_PARENT,
                                        GTK_MESSAGE_ERROR,
                                        GTK_BUTTONS_OK,
-                                       "❌ Error");
+                                       "Error");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(result_dialog),
                                                  "%s", error_msg);
         gtk_dialog_run(GTK_DIALOG(result_dialog));

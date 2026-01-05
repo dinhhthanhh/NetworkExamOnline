@@ -3,6 +3,7 @@
 #include "results.h"
 #include "network.h"
 #include <sys/socket.h>
+#include <unistd.h>  // for usleep
 
 extern ServerData server_data;
 extern sqlite3 *db;
@@ -660,7 +661,7 @@ void delete_room(int socket_fd, int user_id, int room_id) {
   
   // Check if user is admin and room owner
   sqlite3_stmt *stmt;
-  const char *sql_check = "SELECT host_id FROM rooms WHERE id = ? AND is_active = 1;";
+  const char *sql_check = "SELECT host_id FROM rooms WHERE id = ?;";
   int rc = sqlite3_prepare_v2(db, sql_check, -1, &stmt, 0);
   
   if (rc != SQLITE_OK) {
@@ -691,13 +692,16 @@ void delete_room(int socket_fd, int user_id, int room_id) {
     return;
   }
   
-  // ===== BROADCAST ROOM DELETED TO PARTICIPANTS =====
-  // Notify all participants that room is being deleted
+  // ===== BROADCAST TO ALL PARTICIPANTS FIRST =====
   char broadcast_msg[256];
   snprintf(broadcast_msg, sizeof(broadcast_msg), "ROOM_DELETED|%d\n", room_id);
-  broadcast_to_room_participants(room_id, broadcast_msg);
-  printf("[INFO] Broadcasting ROOM_DELETED for room %d\n", room_id);
+  broadcast_to_room_participants(room_id, broadcast_msg);  // GỬI CHO TẤT CẢ
+  printf("[INFO] Broadcasting ROOM_DELETED for room %d to all participants\n", room_id);
   
+  // Small delay để broadcast được xử lý
+  usleep(100000); // 100ms
+  
+  // ===== DELETE FROM DATABASE (HARD DELETE) =====
   // Delete associated data: exam_answers, participants, questions
   const char *sqls[] = {
     "DELETE FROM exam_answers WHERE room_id = ?;",
@@ -707,12 +711,24 @@ void delete_room(int socket_fd, int user_id, int room_id) {
     "DELETE FROM rooms WHERE id = ?;"  // Hard delete the room
   };
   
+  const char *sql_names[] = {
+    "exam_answers", "participants", "exam_questions", "results", "rooms"
+  };
+  
   for (int i = 0; i < 5; i++) {
     rc = sqlite3_prepare_v2(db, sqls[i], -1, &stmt, 0);
     if (rc == SQLITE_OK) {
       sqlite3_bind_int(stmt, 1, room_id);
-      sqlite3_step(stmt);
+      rc = sqlite3_step(stmt);
+      if (rc == SQLITE_DONE) {
+        int deleted = sqlite3_changes(db);
+        printf("[DELETE_ROOM] Deleted %d rows from %s for room %d\n", deleted, sql_names[i], room_id);
+      } else {
+        printf("[DELETE_ROOM] ERROR deleting from %s: %s\n", sql_names[i], sqlite3_errmsg(db));
+      }
       sqlite3_finalize(stmt);
+    } else {
+      printf("[DELETE_ROOM] ERROR preparing DELETE for %s: %s\n", sql_names[i], sqlite3_errmsg(db));
     }
   }
   
@@ -728,10 +744,10 @@ void delete_room(int socket_fd, int user_id, int room_id) {
     }
   }
   
+  // ===== SEND RESPONSE TO ADMIN LAST =====
   char response[] = "DELETE_ROOM_OK\n";
   send(socket_fd, response, strlen(response), 0);
-  
-  printf("[INFO] User %d deleted room %d\n", user_id, room_id);
+  printf("[INFO] Room %d fully deleted from memory and database\n", room_id);
   pthread_mutex_unlock(&server_data.lock);
 }
 

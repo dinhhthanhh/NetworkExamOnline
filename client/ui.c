@@ -42,8 +42,7 @@ void create_main_menu()
     int is_admin = (strcmp(client.role, "admin") == 0);
 
     GtkWidget *welcome_label = gtk_label_new(NULL);
-    gchar *welcome_text = g_strdup_printf("%s Welcome, <b>%s</b>!",
-                                          is_admin ? "👑" : "👤",
+    gchar *welcome_text = g_strdup_printf("Welcome, <b>%s</b>!",
                                           client.username[0] ? client.username : "User");
     gtk_label_set_markup(GTK_LABEL(welcome_label), welcome_text);
     g_free(welcome_text);
@@ -66,12 +65,12 @@ void create_main_menu()
         
         // Section 1: Exam Management
         GtkWidget *exam_section = gtk_label_new(NULL);
-        gtk_label_set_markup(GTK_LABEL(exam_section), 
-            "<span foreground='#3498db' weight='bold' size='14000'>📝 EXAM MANAGEMENT</span>");
+                gtk_label_set_markup(GTK_LABEL(exam_section), 
+                    "<span foreground='#3498db' weight='bold' size='14000'>EXAM MANAGEMENT</span>");
         gtk_label_set_xalign(GTK_LABEL(exam_section), 0);
         gtk_box_pack_start(GTK_BOX(vbox), exam_section, FALSE, FALSE, 8);
         
-        GtkWidget *exam_manage_btn = gtk_button_new_with_label("📊 Manage Exam Rooms");
+                GtkWidget *exam_manage_btn = gtk_button_new_with_label("Manage Exam Rooms");
         style_button(exam_manage_btn, "#3498db");
         gtk_box_pack_start(GTK_BOX(vbox), exam_manage_btn, FALSE, FALSE, 3);
         
@@ -80,12 +79,12 @@ void create_main_menu()
         
         // Section 2: Practice Management
         GtkWidget *practice_section = gtk_label_new(NULL);
-        gtk_label_set_markup(GTK_LABEL(practice_section), 
-            "<span foreground='#9b59b6' weight='bold' size='14000'>🎯 PRACTICE MANAGEMENT</span>");
+                gtk_label_set_markup(GTK_LABEL(practice_section), 
+                    "<span foreground='#9b59b6' weight='bold' size='14000'>PRACTICE MANAGEMENT</span>");
         gtk_label_set_xalign(GTK_LABEL(practice_section), 0);
         gtk_box_pack_start(GTK_BOX(vbox), practice_section, FALSE, FALSE, 8);
         
-        GtkWidget *practice_manage_btn = gtk_button_new_with_label("📊 Manage Practice Rooms");
+                GtkWidget *practice_manage_btn = gtk_button_new_with_label("Manage Practice Rooms");
         style_button(practice_manage_btn, "#9b59b6");
         gtk_box_pack_start(GTK_BOX(vbox), practice_manage_btn, FALSE, FALSE, 3);
         
@@ -93,12 +92,12 @@ void create_main_menu()
         gtk_box_pack_start(GTK_BOX(vbox), sep2, FALSE, FALSE, 10);
         
         // Change Password button
-        GtkWidget *change_pass_btn = gtk_button_new_with_label("🔒 Change Password");
+        GtkWidget *change_pass_btn = gtk_button_new_with_label("Change Password");
         style_button(change_pass_btn, "#f39c12");
         gtk_box_pack_start(GTK_BOX(vbox), change_pass_btn, FALSE, FALSE, 3);
         
         // Logout button
-        GtkWidget *logout_btn = gtk_button_new_with_label("🚪 Logout");
+        GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
         style_button(logout_btn, "#e74c3c");
         gtk_box_pack_start(GTK_BOX(vbox), logout_btn, FALSE, FALSE, 10);
 
@@ -109,12 +108,12 @@ void create_main_menu()
         g_signal_connect(logout_btn, "clicked", G_CALLBACK(on_admin_logout_clicked), NULL);
     } else {
         // ========== USER MENU ==========
-        GtkWidget *test_mode_btn = gtk_button_new_with_label("📝 Test Mode");
-        GtkWidget *practice_btn = gtk_button_new_with_label("🎯 Practice Mode");
-        GtkWidget *stats_btn = gtk_button_new_with_label("📊 My Statistics");
-        GtkWidget *leaderboard_btn = gtk_button_new_with_label("🏆 Leaderboard");
-        GtkWidget *change_pass_btn = gtk_button_new_with_label("🔒 Change Password");
-        GtkWidget *logout_btn = gtk_button_new_with_label("🚪 Logout");
+        GtkWidget *test_mode_btn = gtk_button_new_with_label("Test Mode");
+        GtkWidget *practice_btn = gtk_button_new_with_label("Practice Mode");
+        GtkWidget *stats_btn = gtk_button_new_with_label("My Statistics");
+        GtkWidget *leaderboard_btn = gtk_button_new_with_label("Leaderboard");
+        GtkWidget *change_pass_btn = gtk_button_new_with_label("Change Password");
+        GtkWidget *logout_btn = gtk_button_new_with_label("Logout");
 
         style_button(test_mode_btn, "#3498db");
         style_button(practice_btn, "#9b59b6");

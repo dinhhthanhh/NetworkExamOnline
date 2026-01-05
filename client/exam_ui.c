@@ -4,6 +4,7 @@
 #include "broadcast.h"
 #include <gtk/gtk.h>
 #include <time.h>
+#include <fcntl.h>
 
 extern GtkWidget *main_window;
 extern int sock_fd;
@@ -16,6 +17,8 @@ static time_t exam_start_time = 0;
 static guint timer_id = 0;
 static GtkWidget *timer_label = NULL;
 static GtkWidget **question_radios = NULL; // Array of radio button groups
+static GtkWidget **question_frames = NULL; // Array of question frames for highlighting
+static int *answered_questions = NULL; // Track which questions are answered (1=answered, 0=not)
 static int total_questions = 0;
 
 // Waiting screen state
@@ -87,6 +90,17 @@ static void on_room_deleted_broadcast(int room_id) {
 static gboolean show_room_deleted_notification_idle(gpointer user_data) {
     int room_id = GPOINTER_TO_INT(user_data);
     
+    // ===== THÊM MỚI: Stop timer first =====
+    if (timer_id > 0) {
+        g_source_remove(timer_id);
+        timer_id = 0;
+    }
+    
+    // Stop broadcast listener
+    if (broadcast_is_listening()) {
+        broadcast_stop_listener();
+    }
+    
     // Cleanup exam UI
     cleanup_exam_ui();
     
@@ -94,12 +108,20 @@ static gboolean show_room_deleted_notification_idle(gpointer user_data) {
                                                GTK_DIALOG_MODAL,
                                                GTK_MESSAGE_WARNING,
                                                GTK_BUTTONS_OK,
-                                               "⚠️ Room Deleted");
+                                               "Room Deleted");
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
                                              "Room #%d has been deleted by the administrator.\nYou will be returned to the main menu.",
                                              room_id);
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
+    
+    // ===== THÊM MỚI: Ensure blocking =====
+    if (client.socket_fd > 0) {
+        int flags = fcntl(client.socket_fd, F_GETFL, 0);
+        if (flags >= 0) {
+            fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+        }
+    }
     
     // Return to main menu
     create_test_mode_screen();
@@ -118,12 +140,27 @@ static gboolean update_timer(gpointer data) {
     if (remaining <= 0) {
         // Hết giờ - auto submit
         gtk_label_set_markup(GTK_LABEL(timer_label), 
-                            "<span foreground='red' size='16000' weight='bold'>⏰ TIME'S UP!</span>");
+                    "<span foreground='red' size='16000' weight='bold'>TIME'S UP!</span>");
         
         // Stop timer trước
         if (timer_id > 0) {
             g_source_remove(timer_id);
             timer_id = 0;
+        }
+        
+        // CRITICAL: Stop broadcast listener before submitting
+        if (broadcast_is_listening()) {
+            broadcast_stop_listener();
+            printf("[EXAM_UI] Stopped broadcast listener before auto-submit\n");
+        }
+        
+        // CRITICAL: Ensure blocking mode
+        if (client.socket_fd > 0) {
+            int flags = fcntl(client.socket_fd, F_GETFL, 0);
+            if (flags >= 0) {
+                fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+                printf("[EXAM_UI] Socket set to blocking mode for auto-submit\n");
+            }
         }
         
         // Lưu room_id trước khi cleanup
@@ -154,7 +191,7 @@ static gboolean update_timer(gpointer data) {
                                                              GTK_DIALOG_MODAL,
                                                              GTK_MESSAGE_INFO,
                                                              GTK_BUTTONS_OK,
-                                                             "⏰ Time's Up! Exam Auto-Submitted!");
+                                                             "Time's Up! Exam Auto-Submitted!");
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(result_dialog),
                                                      "Score: %d/%d (%.1f%%)\nTime: %d minutes",
                                                      score, total, (score * 100.0) / total, time_taken);
@@ -171,7 +208,7 @@ static gboolean update_timer(gpointer data) {
                                                              GTK_DIALOG_MODAL,
                                                              GTK_MESSAGE_ERROR,
                                                              GTK_BUTTONS_OK,
-                                                             "❌ Auto-submit failed: %s",
+                                                             "Auto-submit failed: %s",
                                                              buffer);
             gtk_dialog_run(GTK_DIALOG(error_dialog));
             gtk_widget_destroy(error_dialog);
@@ -189,7 +226,7 @@ static gboolean update_timer(gpointer data) {
     char timer_text[128];
     const char *color = (remaining < 300) ? "red" : "#2c3e50"; // Red nếu < 5 phút
     snprintf(timer_text, sizeof(timer_text),
-             "<span foreground='%s' size='16000' weight='bold'>⏱️ %02d:%02d</span>",
+             "<span foreground='%s' size='16000' weight='bold'>%02d:%02d</span>",
              color, minutes, seconds);
     
     gtk_label_set_markup(GTK_LABEL(timer_label), timer_text);
@@ -210,6 +247,7 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     int selected = -1;
     for (int i = 0; i < 4; i++) {
         GtkWidget *radio = question_radios[question_index * 4 + i];
+        if(!radio) continue;
         if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(radio))) {
             selected = i;
             break;
@@ -217,6 +255,32 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     }
     
     if (selected == -1) return;
+    
+    // Mark question as answered
+    if (answered_questions) {
+        answered_questions[question_index] = 1;
+        
+        // Highlight frame với màu xanh nhạt
+        if (question_frames && question_frames[question_index]) {
+            GtkStyleContext *context = gtk_widget_get_style_context(question_frames[question_index]);
+            gtk_style_context_add_class(context, "answered-question");
+            
+            // Add CSS for answered question
+            static gboolean css_added = FALSE;
+            if (!css_added) {
+                GtkCssProvider *provider = gtk_css_provider_new();
+                gtk_css_provider_load_from_data(provider,
+                    ".answered-question { background-color: #e8f5e9; border: 2px solid #4caf50; }",
+                    -1, NULL);
+                gtk_style_context_add_provider_for_screen(
+                    gdk_screen_get_default(),
+                    GTK_STYLE_PROVIDER(provider),
+                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+                g_object_unref(provider);
+                css_added = TRUE;
+            }
+        }
+    }
     
     // Gửi SAVE_ANSWER đến server
     char msg[128];
@@ -242,18 +306,46 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
         timer_id = 0;
     }
     
+    // CRITICAL: Stop broadcast listener before submitting to ensure blocking socket
+    if (broadcast_is_listening()) {
+        broadcast_stop_listener();
+        printf("[EXAM_UI] Stopped broadcast listener before submit\n");
+    }
+    
     // Lưu room_id trước khi cleanup (vì cleanup sẽ reset về 0)
     int submit_room_id = exam_room_id;
     
     // Confirm dialog (trừ khi auto-submit do hết giờ)
     if (widget != NULL) {
+        // Count answered/unanswered questions
+        int answered_count = 0;
+        int unanswered_count = 0;
+        
+        if (answered_questions) {
+            for (int i = 0; i < total_questions; i++) {
+                if (answered_questions[i]) {
+                    answered_count++;
+                } else {
+                    unanswered_count++;
+                }
+            }
+        }
+        
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_MODAL,
                                                    GTK_MESSAGE_QUESTION,
                                                    GTK_BUTTONS_YES_NO,
-                                                   "Submit your exam?");
-        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-                                                 "You cannot change answers after submission.");
+                                                   "Submit Exam?");
+        
+        char detail_msg[256];
+        snprintf(detail_msg, sizeof(detail_msg),
+                 "Answered: %d/%d questions\n"
+                 "Unanswered: %d questions\n\n"
+                 "You cannot change answers after submission.\n"
+                 "Are you sure you want to submit?",
+                 answered_count, total_questions, unanswered_count);
+        
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "%s", detail_msg);
         
         int response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
@@ -267,11 +359,21 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     
     printf("[DEBUG] Submitting exam for room: %d\n", submit_room_id);
     
+    // CRITICAL: Ensure socket is in blocking mode before submit
+    if (client.socket_fd > 0) {
+        int flags = fcntl(client.socket_fd, F_GETFL, 0);
+        if (flags >= 0) {
+            fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+            printf("[EXAM_UI] Socket set to blocking mode for submit\n");
+        }
+    }
+    
     // Gửi SUBMIT_TEST
     char msg[64];
     snprintf(msg, sizeof(msg), "SUBMIT_TEST|%d\n", submit_room_id);
     send_message(msg);
     
+    // Nhận response (KHÔNG flush sau send!)
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
     
@@ -292,12 +394,22 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_INFO,
                                                          GTK_BUTTONS_OK,
-                                                         "✅ Exam Submitted!");
+                                                         "Exam Submitted!");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(result_dialog),
                                                  "Score: %d/%d (%.1f%%)\nTime: %d minutes",
                                                  score, total, (score * 100.0) / total, time_taken);
         gtk_dialog_run(GTK_DIALOG(result_dialog));
         gtk_widget_destroy(result_dialog);
+        
+        // CRITICAL: Ensure socket is in blocking mode before returning to room list
+        // This prevents crashes when LIST_ROOMS is called
+        if (client.socket_fd > 0) {
+            int flags = fcntl(client.socket_fd, F_GETFL, 0);
+            if (flags >= 0) {
+                fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+                printf("[EXAM_UI] Restored blocking mode after submit\n");
+            }
+        }
         
         // Redirect về room list
         create_test_mode_screen();
@@ -310,10 +422,19 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ Submit failed: %s",
+                                                         "Submit failed: %s",
                                                          buffer);
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
+        
+        // CRITICAL: Ensure socket is in blocking mode before returning to room list
+        if (client.socket_fd > 0) {
+            int flags = fcntl(client.socket_fd, F_GETFL, 0);
+            if (flags >= 0) {
+                fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+                printf("[EXAM_UI] Restored blocking mode after submit failure\n");
+            }
+        }
         
         // Redirect về room list
         create_test_mode_screen();
@@ -375,7 +496,7 @@ void create_exam_page(int room_id) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ Cannot start exam");
+                                                         "Cannot start exam");
         
         if (strncmp(buffer, "ERROR", 5) == 0) {
             char *msg = strchr(buffer, '|');
@@ -413,7 +534,7 @@ static void start_exam_ui(int room_id) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ Cannot start exam");
+                                                         "Cannot start exam");
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         return;
@@ -451,7 +572,7 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ No questions in this room");
+                                                         "No questions in this room");
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         return;
@@ -460,6 +581,8 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     // Allocate memory
     questions = malloc(sizeof(Question) * total_questions);
     question_radios = malloc(sizeof(GtkWidget*) * total_questions * 4);
+    question_frames = malloc(sizeof(GtkWidget*) * total_questions);
+    answered_questions = calloc(total_questions, sizeof(int)); // Initialize to 0
     
     // Parse lại từ original buffer để lấy questions
     ptr = original_buffer;
@@ -506,7 +629,7 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
                                                          GTK_DIALOG_MODAL,
                                                          GTK_MESSAGE_ERROR,
                                                          GTK_BUTTONS_OK,
-                                                         "❌ No questions found");
+                                                         "No questions found");
         gtk_dialog_run(GTK_DIALOG(error_dialog));
         gtk_widget_destroy(error_dialog);
         return;
@@ -534,7 +657,7 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-                        "<span size='20000' weight='bold'>📝 EXAM</span>");
+                        "<span size='20000' weight='bold'>EXAM</span>");
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
     
     timer_label = gtk_label_new(NULL);
@@ -583,27 +706,44 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
         gtk_box_pack_start(GTK_BOX(q_vbox), q_label, FALSE, FALSE, 0);
         
         // Radio buttons cho options
-        GSList *group = NULL;
         const char *labels[] = {"A", "B", "C", "D"};
-        
+
+        // Dummy radio ẩn để giữ trạng thái "không chọn đáp án nào" ban đầu
+        GtkWidget *dummy_radio = gtk_radio_button_new(NULL);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dummy_radio), TRUE);
+        gtk_widget_set_no_show_all(dummy_radio, TRUE);
+        gtk_widget_hide(dummy_radio);
+        gtk_box_pack_start(GTK_BOX(q_vbox), dummy_radio, FALSE, FALSE, 0);
+
+        GSList *group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(dummy_radio));
+
         for (int j = 0; j < 4; j++) {
             char option_text[150];
-            snprintf(option_text, sizeof(option_text), "%s. %s", 
-                    labels[j], questions[i].options[j]);
-            
+            snprintf(option_text, sizeof(option_text),
+                    "%s. %s", labels[j], questions[i].options[j]);
+
             GtkWidget *radio = gtk_radio_button_new_with_label(group, option_text);
             group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
-            
-            g_signal_connect(radio, "toggled", 
-                           G_CALLBACK(on_answer_selected), 
-                           GINT_TO_POINTER(i));
-            
-            gtk_box_pack_start(GTK_BOX(q_vbox), radio, FALSE, FALSE, 0);
+
+            g_signal_connect(
+                radio,
+                "toggled",
+                G_CALLBACK(on_answer_selected),
+                GINT_TO_POINTER(i)
+            );
+
+            // Ban đầu không chọn đáp án nào (dummy_radio đang active)
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), FALSE);
+
             question_radios[i * 4 + j] = radio;
+            gtk_box_pack_start(GTK_BOX(q_vbox), radio, FALSE, FALSE, 0);
         }
-        
+
         gtk_container_add(GTK_CONTAINER(q_frame), q_vbox);
         gtk_box_pack_start(GTK_BOX(questions_box), q_frame, FALSE, FALSE, 0);
+        
+        // Store frame reference
+        question_frames[i] = q_frame;
         
         printf("[DEBUG] Added question %d: %s\n", i+1, questions[i].text);
     }
@@ -614,7 +754,7 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     printf("[DEBUG] All questions added to UI\n");
     
     // Submit button
-    GtkWidget *submit_btn = gtk_button_new_with_label("📤 SUBMIT EXAM");
+    GtkWidget *submit_btn = gtk_button_new_with_label("SUBMIT EXAM");
     gtk_widget_set_size_request(submit_btn, 200, 50);
     g_signal_connect(submit_btn, "clicked", G_CALLBACK(on_submit_exam_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit_btn, FALSE, FALSE, 0);
@@ -632,6 +772,12 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
 }
 
 void cleanup_exam_ui() {
+    // CRITICAL: Stop broadcast listener first to prevent callbacks on destroyed widgets
+    if (broadcast_is_listening()) {
+        broadcast_stop_listener();
+        printf("[EXAM_UI] Stopped broadcast listener during cleanup\n");
+    }
+    
     if (timer_id > 0) {
         g_source_remove(timer_id);
         timer_id = 0;
@@ -639,7 +785,7 @@ void cleanup_exam_ui() {
     
     // Remove exam widget from window properly
     GtkWidget *old_child = gtk_bin_get_child(GTK_BIN(main_window));
-    if (old_child) {
+    if (old_child && GTK_IS_WIDGET(old_child)) {  // ← CHECK TRƯỚC KHI REMOVE
         gtk_container_remove(GTK_CONTAINER(main_window), old_child);
     }
     
@@ -651,6 +797,25 @@ void cleanup_exam_ui() {
     if (question_radios) {
         free(question_radios);
         question_radios = NULL;
+    }
+    
+    if (question_frames) {
+        free(question_frames);
+        question_frames = NULL;
+    }
+    
+    if (answered_questions) {
+        free(answered_questions);
+        answered_questions = NULL;
+    }
+    
+    // ===== THÊM MỚI: Restore blocking mode =====
+    if (client.socket_fd > 0) {
+        int flags = fcntl(client.socket_fd, F_GETFL, 0);
+        if (flags >= 0) {
+            fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
+            printf("[EXAM_UI] Restored socket to blocking mode\n");
+        }
     }
     
     exam_room_id = 0;
@@ -710,6 +875,8 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     // Allocate memory
     questions = malloc(sizeof(Question) * total_questions);
     question_radios = malloc(sizeof(GtkWidget*) * total_questions * 4);
+    question_frames = malloc(sizeof(GtkWidget*) * total_questions);
+    answered_questions = calloc(total_questions, sizeof(int)); // Initialize to 0
     int saved_answers[total_questions];
     
     // Parse từng câu hỏi
@@ -788,13 +955,13 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     GtkWidget *title = gtk_label_new(NULL);
     char title_text[128];
     snprintf(title_text, sizeof(title_text),
-             "<span size='x-large' weight='bold'>📝 EXAM (Room %d) - RESUMED</span>",
+             "<span size='x-large' weight='bold'>EXAM (Room %d) - RESUMED</span>",
              room_id);
     gtk_label_set_markup(GTK_LABEL(title), title_text);
     
     timer_label = gtk_label_new("");
     gtk_label_set_markup(GTK_LABEL(timer_label),
-                        "<span foreground='#2c3e50' size='16000' weight='bold'>⏱️ Loading...</span>");
+                        "<span foreground='#2c3e50' size='16000' weight='bold'>Loading...</span>");
     
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(header_box), timer_label, FALSE, FALSE, 0);
@@ -831,8 +998,16 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
         gtk_box_pack_start(GTK_BOX(q_box), q_label, FALSE, FALSE, 0);
         
         // Radio buttons cho options
-        GSList *group = NULL;
         const char *labels[] = {"A", "B", "C", "D"};
+
+        // Dummy radio ẩn để trạng thái "chưa chọn đáp án" nếu chưa có saved answer
+        GtkWidget *dummy_radio = gtk_radio_button_new(NULL);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dummy_radio), TRUE);
+        gtk_widget_set_no_show_all(dummy_radio, TRUE);
+        gtk_widget_hide(dummy_radio);
+        gtk_box_pack_start(GTK_BOX(q_box), dummy_radio, FALSE, FALSE, 0);
+
+        GSList *group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(dummy_radio));
         
         for (int j = 0; j < 4; j++) {
             char opt_text[150];
@@ -841,9 +1016,11 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
             GtkWidget *radio = gtk_radio_button_new_with_label(group, opt_text);
             group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
             
-            // Restore saved answer
+            // Restore saved answer (nếu có): sẽ tự disable dummy_radio
             if (saved_answers[i] == j) {
                 gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), TRUE);
+            } else {
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), FALSE);
             }
             
             g_signal_connect(radio, "toggled", G_CALLBACK(on_answer_selected), GINT_TO_POINTER(i));
@@ -852,15 +1029,47 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
             gtk_box_pack_start(GTK_BOX(q_box), radio, FALSE, FALSE, 0);
         }
         
+        // Mark as answered if we have a saved answer
+        if (saved_answers[i] >= 0) {
+            answered_questions[i] = 1;
+            
+            // Highlight frame
+            GtkStyleContext *context = gtk_widget_get_style_context(q_frame);
+            gtk_style_context_add_class(context, "answered-question");
+            
+            // Add CSS for answered question
+            static gboolean css_added = FALSE;
+            if (!css_added) {
+                GtkCssProvider *provider = gtk_css_provider_new();
+                gtk_css_provider_load_from_data(provider,
+                    ".answered-question { background-color: #e8f5e9; border: 2px solid #4caf50; }",
+                    -1, NULL);
+                gtk_style_context_add_provider_for_screen(
+                    gdk_screen_get_default(),
+                    GTK_STYLE_PROVIDER(provider),
+                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+                g_object_unref(provider);
+                css_added = TRUE;
+            }
+        } else {
+            // Unset default selection for unanswered questions
+            if (question_radios[i * 4]) {
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(question_radios[i * 4]), FALSE);
+            }
+        }
+        
         gtk_container_add(GTK_CONTAINER(q_frame), q_box);
         gtk_box_pack_start(GTK_BOX(questions_box), q_frame, FALSE, FALSE, 0);
+        
+        // Store frame reference
+        question_frames[i] = q_frame;
     }
     
     gtk_container_add(GTK_CONTAINER(scroll), questions_box);
     gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
     
     // Submit button
-    GtkWidget *submit_btn = gtk_button_new_with_label("✅ SUBMIT EXAM");
+    GtkWidget *submit_btn = gtk_button_new_with_label("SUBMIT EXAM");
     g_signal_connect(submit_btn, "clicked", G_CALLBACK(on_submit_exam_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), submit_btn, FALSE, FALSE, 0);
     

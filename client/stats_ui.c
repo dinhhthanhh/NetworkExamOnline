@@ -116,7 +116,7 @@ gboolean on_draw_chart(GtkWidget *widget, cairo_t *cr, gpointer data) {
         cairo_set_font_size(cr, 16);
         cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
         cairo_move_to(cr, width/2 - 100, height/2);
-        cairo_show_text(cr, "📈 No statistics yet. Start testing!");
+        cairo_show_text(cr, "No statistics yet. Start testing!");
         return FALSE;
     }
     
@@ -182,28 +182,28 @@ gboolean on_draw_chart(GtkWidget *widget, cairo_t *cr, gpointer data) {
     // Total Tests
     cairo_move_to(cr, info_x, info_y);
     char tests_text[100];
-    snprintf(tests_text, sizeof(tests_text), "📝 Total Tests: %d", stats.total_tests);
+    snprintf(tests_text, sizeof(tests_text), "Total Tests: %d", stats.total_tests);
     cairo_show_text(cr, tests_text);
     
     // Average Score
     info_y += spacing;
     cairo_move_to(cr, info_x, info_y);
     char avg_text[100];
-    snprintf(avg_text, sizeof(avg_text), "📊 Average Score: %.2f%%", stats.avg_score);
+    snprintf(avg_text, sizeof(avg_text), "Average Score: %.2f%%", stats.avg_score);
     cairo_show_text(cr, avg_text);
     
     // Max Score
     info_y += spacing;
     cairo_move_to(cr, info_x, info_y);
     char max_text[100];
-    snprintf(max_text, sizeof(max_text), "🏆 Best Score: %d", stats.max_score);
+    snprintf(max_text, sizeof(max_text), "Best Score: %d", stats.max_score);
     cairo_show_text(cr, max_text);
     
     // Total Score
     info_y += spacing;
     cairo_move_to(cr, info_x, info_y);
     char total_text[100];
-    snprintf(total_text, sizeof(total_text), "⭐ Total Score: %d", stats.total_score);
+    snprintf(total_text, sizeof(total_text), "Total Score: %d", stats.total_score);
     cairo_show_text(cr, total_text);
     
     // Vẽ progress bar cho average score
@@ -255,7 +255,7 @@ void create_stats_screen()
     // Title
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
-        "<span foreground='#2c3e50' weight='bold' size='20480'>📊 MY STATISTICS</span>");
+        "<span foreground='#2c3e50' weight='bold' size='20480'>MY STATISTICS</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
 
     // Separator
@@ -287,7 +287,7 @@ void create_stats_screen()
     // Test History Section
     GtkWidget *history_title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(history_title), 
-        "<span foreground='#2c3e50' weight='bold' size='16384'>📝 Recent Test History</span>");
+        "<span foreground='#2c3e50' weight='bold' size='16384'>Recent Test History</span>");
     gtk_box_pack_start(GTK_BOX(vbox), history_title, FALSE, FALSE, 5);
 
     // Scroll window cho test history
@@ -368,7 +368,7 @@ void create_stats_screen()
                 
                 // Icon và room name
                 char room_text[512]; // Increased buffer size
-                snprintf(room_text, sizeof(room_text), "📚 %s", room_name);
+                snprintf(room_text, sizeof(room_text), "%s", room_name);
                 GtkWidget *room_label = gtk_label_new(room_text);
                 gtk_label_set_xalign(GTK_LABEL(room_label), 0.0);
                 gtk_widget_set_size_request(room_label, 250, -1);
@@ -376,7 +376,7 @@ void create_stats_screen()
                 // Score
                 char score_text[64];
                 double percent = (total > 0) ? (score * 100.0 / total) : 0;
-                snprintf(score_text, sizeof(score_text), "📊 %d/%d (%.1f%%)", score, total, percent);
+                snprintf(score_text, sizeof(score_text), "%d/%d (%.1f%%)", score, total, percent);
                 GtkWidget *score_label = gtk_label_new(score_text);
                 gtk_widget_set_size_request(score_label, 150, -1);
                 
@@ -384,18 +384,17 @@ void create_stats_screen()
                 char time_text[64];
                 int minutes = time_taken / 60;
                 int seconds = time_taken % 60;
-                snprintf(time_text, sizeof(time_text), "⏱️ %dm %ds", minutes, seconds);
+                snprintf(time_text, sizeof(time_text), "%dm %ds", minutes, seconds);
                 GtkWidget *time_label = gtk_label_new(time_text);
                 gtk_widget_set_size_request(time_label, 120, -1);
                 
                 // Date
                 char date_text[512]; // Increased buffer size
-                snprintf(date_text, sizeof(date_text), "📅 %s", completed);
+                snprintf(date_text, sizeof(date_text), "%s", completed);
                 GtkWidget *date_label = gtk_label_new(date_text);
                 
                 gtk_box_pack_start(GTK_BOX(test_row), room_label, FALSE, FALSE, 0);
                 gtk_box_pack_start(GTK_BOX(test_row), score_label, FALSE, FALSE, 0);
-                gtk_box_pack_start(GTK_BOX(test_row), time_label, FALSE, FALSE, 0);
                 gtk_box_pack_start(GTK_BOX(test_row), date_label, TRUE, TRUE, 0);
                 
                 gtk_box_pack_start(GTK_BOX(history_box), test_row, FALSE, FALSE, 0);
@@ -425,7 +424,7 @@ void create_stats_screen()
 
     // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     style_button(back_btn, "#95a5a6");
     gtk_box_pack_start(GTK_BOX(button_box), back_btn, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), button_box, FALSE, FALSE, 0);
@@ -443,7 +442,7 @@ void create_leaderboard_screen() {
 
     // Title với icon
     GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *trophy_icon = gtk_label_new("🏆");
+    GtkWidget *trophy_icon = gtk_label_new("");
     gtk_widget_set_name(trophy_icon, "trophy-icon");
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title), 
@@ -459,7 +458,7 @@ void create_leaderboard_screen() {
     // Thông tin cập nhật
     GtkWidget *info_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(info_label), 
-        "<span foreground='#7f8c8d' size='small'>📊 Updated in real-time • Based on total score</span>");
+        "<span foreground='#7f8c8d' size='small'>Updated in real-time • Based on total score</span>");
     gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 5);
 
     // Main container cho leaderboard
@@ -473,10 +472,10 @@ void create_leaderboard_screen() {
     GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_name(header_box, "leaderboard-header");
     
-    GtkWidget *rank_header = gtk_label_new("🏅 RANK");
-    GtkWidget *user_header = gtk_label_new("👤 PLAYER");
-    GtkWidget *score_header = gtk_label_new("⭐ SCORE");
-    GtkWidget *tests_header = gtk_label_new("📝 TESTS");
+    GtkWidget *rank_header = gtk_label_new("RANK");
+    GtkWidget *user_header = gtk_label_new("PLAYER");
+    GtkWidget *score_header = gtk_label_new("SCORE");
+    GtkWidget *tests_header = gtk_label_new("TESTS");
     
     gtk_label_set_xalign(GTK_LABEL(rank_header), 0.5);
     gtk_label_set_xalign(GTK_LABEL(user_header), 0.0);
@@ -531,17 +530,8 @@ void create_leaderboard_screen() {
                     gtk_style_context_add_class(gtk_widget_get_style_context(row_box), "rank-3");
                 }
                 
-                // Rank với icon đặc biệt cho top 3
-                GtkWidget *rank_label;
-                if (rank_num == 1) {
-                    rank_label = gtk_label_new("🥇");
-                } else if (rank_num == 2) {
-                    rank_label = gtk_label_new("🥈");
-                } else if (rank_num == 3) {
-                    rank_label = gtk_label_new("🥉");
-                } else {
-                    rank_label = gtk_label_new(entry.rank);
-                }
+                // Rank label (text only, styling via CSS for top 3)
+                GtkWidget *rank_label = gtk_label_new(entry.rank);
                 gtk_label_set_xalign(GTK_LABEL(rank_label), 0.5);
                 gtk_widget_set_hexpand(rank_label, TRUE);
                 
@@ -584,14 +574,14 @@ void create_leaderboard_screen() {
             // Hiển thị thông báo nếu không có dữ liệu
             GtkWidget *empty_label = gtk_label_new(NULL);
             gtk_label_set_markup(GTK_LABEL(empty_label), 
-                "<span foreground='#95a5a6' size='large'>📭 No players on leaderboard yet</span>");
+                "<span foreground='#95a5a6' size='large'>No players on leaderboard yet</span>");
             gtk_box_pack_start(GTK_BOX(content_box), empty_label, FALSE, FALSE, 20);
         }
     } else {
         // Hiển thị lỗi nếu không kết nối được
         GtkWidget *error_label = gtk_label_new(NULL);
         gtk_label_set_markup(GTK_LABEL(error_label), 
-            "<span foreground='#e74c3c' size='large'>⚠️ Cannot load leaderboard. Check connection.</span>");
+            "<span foreground='#e74c3c' size='large'>Cannot load leaderboard. Check connection.</span>");
         gtk_box_pack_start(GTK_BOX(content_box), error_label, FALSE, FALSE, 20);
     }
     
@@ -605,11 +595,11 @@ void create_leaderboard_screen() {
     
     GtkWidget *total_players = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(total_players), 
-        "<span foreground='#27ae60' weight='bold'>👥 Total Players: Loading...</span>");
+        "<span foreground='#27ae60' weight='bold'>Total Players: Loading...</span>");
     
     GtkWidget *avg_score = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(avg_score), 
-        "<span foreground='#3498db' weight='bold'>📊 Avg Score: Calculating...</span>");
+        "<span foreground='#3498db' weight='bold'>Avg Score: Calculating...</span>");
     
     gtk_box_pack_start(GTK_BOX(stats_box), total_players, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(stats_box), avg_score, TRUE, TRUE, 0);
@@ -617,8 +607,8 @@ void create_leaderboard_screen() {
 
     // Button box
     GtkWidget *button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 REFRESH");
-    GtkWidget *back_btn = gtk_button_new_with_label("⬅️ BACK");
+    GtkWidget *refresh_btn = gtk_button_new_with_label("REFRESH");
+    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
     
     style_button(refresh_btn, "#3498db");
     style_button(back_btn, "#95a5a6");

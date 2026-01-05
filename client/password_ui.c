@@ -18,17 +18,17 @@ void on_change_password_submit(GtkWidget *widget, gpointer user_data) {
     
     // Validation
     if (strlen(old_pass) == 0 || strlen(new_pass) == 0 || strlen(confirm_pass) == 0) {
-        show_error_dialog("⚠️ Please fill all fields!");
+        show_error_dialog("Please fill all fields!");
         return;
     }
     
     if (strlen(new_pass) < 3) {
-        show_error_dialog("⚠️ New password must be at least 3 characters!");
+        show_error_dialog("New password must be at least 3 characters!");
         return;
     }
     
     if (strcmp(new_pass, confirm_pass) != 0) {
-        show_error_dialog("⚠️ New passwords do not match!");
+        show_error_dialog("New passwords do not match!");
         return;
     }
     
@@ -50,7 +50,7 @@ void on_change_password_submit(GtkWidget *widget, gpointer user_data) {
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_INFO,
                 GTK_BUTTONS_OK,
-                "✅ Password Changed Successfully"
+                "Password Changed Successfully"
             );
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(success_dialog),
                 "Your password has been updated.");
@@ -75,7 +75,7 @@ void on_change_password_submit(GtkWidget *widget, gpointer user_data) {
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_ERROR,
                 GTK_BUTTONS_OK,
-                "❌ Error"
+                "Error"
             );
             gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(error_dialog),
                 "%s", error_msg);
@@ -83,7 +83,7 @@ void on_change_password_submit(GtkWidget *widget, gpointer user_data) {
             gtk_widget_destroy(error_dialog);
         }
     } else {
-        show_error_dialog("❌ Network error!");
+        show_error_dialog("Network error!");
     }
 }
 
@@ -111,7 +111,7 @@ void show_change_password_dialog(void) {
     // Title
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title),
-        "<span size='14000' weight='bold'>🔒 Change Your Password</span>");
+        "<span size='14000' weight='bold'>Change Your Password</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 5);
     
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);

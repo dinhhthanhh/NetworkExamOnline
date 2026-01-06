@@ -653,13 +653,17 @@ void create_admin_panel()
                                GINT_TO_POINTER(room_id));
                 gtk_box_pack_start(GTK_BOX(btn_box), results_btn, FALSE, FALSE, 0);
                 
-                // Always show delete button
+                // Delete chỉ cho phép khi phòng đã hết thời gian thi (status Ended)
                 GtkWidget *delete_btn = gtk_button_new_with_label("DELETE");
                 style_button(delete_btn, "#c0392b");
                 gtk_widget_set_size_request(delete_btn, 120, 40);
-                g_signal_connect(delete_btn, "clicked", 
-                               G_CALLBACK(on_delete_room_clicked), 
-                               GINT_TO_POINTER(room_id));
+                if (strcmp(status, "Ended") == 0) {
+                    g_signal_connect(delete_btn, "clicked", 
+                                     G_CALLBACK(on_delete_room_clicked), 
+                                     GINT_TO_POINTER(room_id));
+                } else {
+                    gtk_widget_set_sensitive(delete_btn, FALSE);
+                }
                 gtk_box_pack_start(GTK_BOX(btn_box), delete_btn, FALSE, FALSE, 0);
                 
                 gtk_box_pack_end(GTK_BOX(hbox), btn_box, FALSE, FALSE, 0);

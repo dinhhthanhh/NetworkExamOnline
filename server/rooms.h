@@ -8,7 +8,6 @@ void list_test_rooms(int socket_fd);
 void list_my_rooms(int socket_fd, int user_id);
 void delete_room(int socket_fd, int user_id, int room_id);
 void join_test_room(int socket_fd, int user_id, int room_id);
-// void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_attempts); // REMOVED
 void start_test(int socket_fd, int user_id, int room_id);
 void handle_begin_exam(int socket_fd, int user_id, int room_id);
 void handle_resume_exam(int socket_fd, int user_id, int room_id);

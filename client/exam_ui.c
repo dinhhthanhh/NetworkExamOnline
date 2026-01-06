@@ -945,7 +945,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     
     printf("[DEBUG] Resume data: %s\n", resume_data);
     
-    // Parse: RESUME_EXAM_OK|remaining_seconds|q1_id:text:A:B:C:D:difficulty:saved_answer|...
+    // Parse: RESUME_EXAM_OK|remaining_seconds|q1_id:text:A:B:C:D[:difficulty]:saved_answer|...
     
     // Make a copy to work with
     char *data_copy = strdup(resume_data);
@@ -996,7 +996,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     int q_idx = 0;
     char *q_token;
     while ((q_token = strtok(NULL, "|")) != NULL && q_idx < total_questions) {
-        // Parse: q_id:text:optA:optB:optC:optD:difficulty:saved_answer
+        // Parse: q_id:text:optA:optB:optC:optD[:difficulty]:saved_answer
         char *q_ptr = q_token;
         
         // Parse question_id
@@ -1019,16 +1019,29 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
             }
         }
         
-        // Parse difficulty
-        char *diff = strsep(&q_ptr, ":");
-        if (diff && strlen(diff) > 0) {
-            strncpy(questions[q_idx].difficulty, diff, sizeof(questions[q_idx].difficulty) - 1);
+        // Hiện tại server gửi chuỗi không có difficulty (chỉ có saved_answer),
+        // nhưng để tương thích nếu sau này thêm difficulty, ta xử lý linh hoạt:
+        char *difficulty_str = NULL;
+        char *saved_str = NULL;
+
+        if (q_ptr && strchr(q_ptr, ':')) {
+            // Có thêm trường difficulty: phần còn lại = "difficulty:saved_answer"
+            difficulty_str = strsep(&q_ptr, ":");
+            saved_str = strsep(&q_ptr, ":");
+        } else if (q_ptr) {
+            // Chỉ có saved_answer
+            saved_str = q_ptr;
+        }
+
+        // Gán difficulty (nếu không có thì default Medium)
+        if (difficulty_str && strlen(difficulty_str) > 0) {
+            strncpy(questions[q_idx].difficulty, difficulty_str,
+                    sizeof(questions[q_idx].difficulty) - 1);
         } else {
             strcpy(questions[q_idx].difficulty, "Medium");
         }
-        
+
         // Parse saved answer
-        char *saved_str = strsep(&q_ptr, ":");
         int saved_val = (saved_str ? atoi(saved_str) : -1);
         if (saved_val >= 0) {
             answered_questions[q_idx] = 1;

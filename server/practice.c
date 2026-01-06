@@ -8,7 +8,11 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-// Initialize practice room tables in database
+/*
+ * Khởi tạo toàn bộ bảng liên quan đến chế độ luyện tập (practice):
+ *  - practice_rooms, practice_room_questions, practice_sessions,
+ *    practice_answers, practice_logs.
+ */
 void init_practice_tables() {
     char *err_msg = 0;
     
@@ -104,7 +108,10 @@ void init_practice_tables() {
     }
 }
 
-// Load practice rooms from database
+/*
+ * Nạp danh sách practice_rooms từ DB vào server_data.practice_rooms
+ * và load luôn danh sách câu hỏi thuộc từng phòng luyện tập.
+ */
 void load_practice_rooms_from_db() {
     pthread_mutex_lock(&server_data.lock);
     
@@ -154,7 +161,11 @@ void load_practice_rooms_from_db() {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Create a new practice room
+/*
+ * Tạo phòng luyện tập mới (chỉ admin):
+ *  - Cho phép cấu hình thời gian chờ giữa các lần luyện (cooldown, phút), chế độ hiển thị đáp án
+ *  - Lưu vào DB và cập nhật vào server_data.practice_rooms.
+ */
 void create_practice_room(int socket_fd, int creator_id, char *room_name, int time_limit, int show_answers) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -194,14 +205,19 @@ void create_practice_room(int socket_fd, int creator_id, char *room_name, int ti
         return;
     }
     
+    // Nếu admin bật Show Answers = YES, luôn bỏ qua cooldown
+    if (show_answers) {
+        time_limit = 0;
+    }
+    // Validate cooldown (minutes). 0 = no cooldown restriction.
     if (time_limit < 0 || time_limit > 300) {
-        char response[] = "CREATE_PRACTICE_FAIL|Invalid time limit (0-300 minutes, 0 = unlimited)\n";
+        char response[] = "CREATE_PRACTICE_FAIL|Invalid cooldown (0-300 minutes, 0 = no limit)\n";
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
     
-    // Insert into database
+    // Insert into database (time_limit is used as cooldown minutes)
     const char *sql = "INSERT INTO practice_rooms (name, creator_id, time_limit, show_answers, is_open, created_at) VALUES (?, ?, ?, ?, 1, ?);";
     sqlite3_stmt *stmt;
     
@@ -250,20 +266,24 @@ void create_practice_room(int socket_fd, int creator_id, char *room_name, int ti
              practice_id, room_name, time_limit, show_answers);
     send(socket_fd, response, strlen(response), 0);
     
-    printf("Practice room created: ID=%d, Name=%s, TimeLimit=%d, ShowAnswers=%d\n", 
-           practice_id, room_name, time_limit, show_answers);
+        printf("Practice room created: ID=%d, Name=%s, Cooldown=%d, ShowAnswers=%d\n", 
+            practice_id, room_name, time_limit, show_answers);
     
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// List all practice rooms
+/*
+ * Trả về danh sách tất cả phòng luyện tập hiện có
+ * cùng thông tin cấu hình cơ bản cho client.
+ */
 void list_practice_rooms(int socket_fd) {
     pthread_mutex_lock(&server_data.lock);
     
     char response[BUFFER_SIZE * 2];
     int offset = snprintf(response, sizeof(response), "PRACTICE_ROOMS_LIST|");
     
-    for (int i = 0; i < server_data.practice_room_count; i++) {
+    // Mới nhất nằm ở cuối mảng -> duyệt ngược để phòng mới tạo hiển thị trên đầu
+    for (int i = server_data.practice_room_count - 1; i >= 0; i--) {
         PracticeRoom *room = &server_data.practice_rooms[i];
         
         // Get creator username
@@ -275,12 +295,19 @@ void list_practice_rooms(int socket_fd) {
             }
         }
         
-        // Count active participants
+        // Count active participants: chỉ tính session đang active VÀ user đang online
         int active_count = 0;
         for (int j = 0; j < server_data.practice_session_count; j++) {
-            if (server_data.practice_sessions[j].practice_id == room->practice_id &&
-                server_data.practice_sessions[j].is_active == 1) {
-                active_count++;
+            PracticeSession *s = &server_data.practice_sessions[j];
+            if (s->practice_id == room->practice_id && s->is_active == 1) {
+                // Kiểm tra user này có đang online không
+                for (int u = 0; u < server_data.user_count; u++) {
+                    if (server_data.users[u].user_id == s->user_id &&
+                        server_data.users[u].is_online == 1) {
+                        active_count++;
+                        break;
+                    }
+                }
             }
         }
         
@@ -302,7 +329,10 @@ void list_practice_rooms(int socket_fd) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Add question to practice room
+/*
+ * Gắn một câu hỏi vào phòng luyện tập:
+ *  - Liên kết practice_id với practice_questions thông qua practice_room_questions.
+ */
 void add_question_to_practice(int socket_fd, int user_id, int practice_id, int question_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -380,7 +410,11 @@ void add_question_to_practice(int socket_fd, int user_id, int practice_id, int q
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Join practice room (start a practice session)
+/*
+ * User tham gia một phòng luyện tập:
+ *  - Tạo practice_session mới, kiểm tra điều kiện thời gian và trạng thái phòng
+ *  - Trả về danh sách câu hỏi cho phiên luyện tập.
+ */
 void join_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -442,7 +476,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
         return;
     }
     
-    // Check if user has an active session
+    // Check if user has an active session (always allowed to resume)
     for (int i = 0; i < server_data.practice_session_count; i++) {
         if (server_data.practice_sessions[i].user_id == user_id &&
             server_data.practice_sessions[i].practice_id == practice_id &&
@@ -500,7 +534,42 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
             return;
         }
     }
-    
+
+    // Nếu admin tắt show_answers và cấu hình time_limit > 0 thì coi như
+    // đây là thời gian chờ (cooldown) giữa các lần luyện lại.
+    if (room->show_answers == 0 && room->time_limit > 0) {
+        time_t now = time(NULL);
+        time_t latest_end = 0;
+
+        // Tìm phiên luyện tập đã hoàn thành gần nhất
+        for (int i = 0; i < server_data.practice_session_count; i++) {
+            PracticeSession *s = &server_data.practice_sessions[i];
+            if (s->user_id == user_id &&
+                s->practice_id == practice_id &&
+                s->is_active == 0 &&
+                s->end_time > 0) {
+                if (s->end_time > latest_end) {
+                    latest_end = s->end_time;
+                }
+            }
+        }
+
+        if (latest_end > 0) {
+            time_t diff = now - latest_end;
+            time_t required = room->time_limit * 60; // phút -> giây
+            if (diff < required) {
+                int remaining = (int)((required - diff + 59) / 60); // làm tròn lên phút còn lại
+                char response[256];
+                snprintf(response, sizeof(response),
+                         "JOIN_PRACTICE_FAIL|Please wait %d more minutes before practicing again\n",
+                         remaining);
+                send(socket_fd, response, strlen(response), 0);
+                pthread_mutex_unlock(&server_data.lock);
+                return;
+            }
+        }
+    }
+
     // Create new practice session
     const char *sql = "INSERT INTO practice_sessions (practice_id, user_id, start_time, total_questions, is_active) VALUES (?, ?, ?, ?, 1);";
     sqlite3_stmt *stmt;
@@ -600,7 +669,10 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Submit practice answer
+/*
+ * Lưu đáp án cho một câu hỏi trong phiên luyện tập:
+ *  - Cập nhật practice_answers và, nếu cấu hình, đánh dấu đúng/sai ngay.
+ */
 void submit_practice_answer(int socket_fd, int user_id, int practice_id, int question_num, int answer) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -703,7 +775,11 @@ void submit_practice_answer(int socket_fd, int user_id, int practice_id, int que
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Finish practice session
+/*
+ * Kết thúc một phiên luyện tập:
+ *  - Tính điểm, thời gian làm
+ *  - Đánh dấu session là không còn active.
+ */
 void finish_practice_session(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -761,7 +837,10 @@ void finish_practice_session(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// View practice results
+/*
+ * Xem kết quả chi tiết của một phòng luyện tập cho user:
+ *  - Trả về điểm, tổng câu hỏi, có thể kèm từng câu nếu được lưu.
+ */
 void view_practice_results(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -849,13 +928,19 @@ void view_practice_results(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Restart practice (create new session)
+/*
+ * Tạo lại session luyện tập mới cho cùng một phòng,
+ * cho phép user luyện lại từ đầu.
+ */
 void restart_practice(int socket_fd, int user_id, int practice_id) {
     // Just join again - it will create a new session
     join_practice_room(socket_fd, user_id, practice_id);
 }
 
-// Close practice room
+/*
+ * Đóng phòng luyện tập (chỉ chủ phòng/admin):
+ *  - Không cho phép user mới tham gia, các session hiện tại vẫn giữ.
+ */
 void close_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -917,7 +1002,9 @@ void close_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Open practice room
+/*
+ * Mở lại phòng luyện tập đã đóng để user có thể tiếp tục tham gia.
+ */
 void open_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -953,7 +1040,9 @@ void open_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Get practice room participants
+/*
+ * Lấy danh sách user đã hoặc đang tham gia một phòng luyện tập.
+ */
 void get_practice_participants(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -1023,7 +1112,10 @@ void get_practice_participants(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Save practice log
+/*
+ * Lưu log chi tiết cho từng lần trả lời câu hỏi trong chế độ luyện tập
+ * vào bảng practice_logs để phân tích sau này.
+ */
 void save_practice_log(int user_id, int practice_id, int question_id, int answer, int is_correct) {
     const char *sql = "INSERT INTO practice_logs (user_id, practice_id, question_id, answer, is_correct, attempt_time) VALUES (?, ?, ?, ?, ?, ?);";
     sqlite3_stmt *stmt;
@@ -1045,7 +1137,9 @@ void save_practice_log(int user_id, int practice_id, int question_id, int answer
     }
 }
 
-// Get practice rooms created by a specific user
+/*
+ * Lấy danh sách các phòng luyện tập do một user (thường là admin) tạo.
+ */
 void get_user_practice_rooms(int socket_fd, int user_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -1074,7 +1168,10 @@ void get_user_practice_rooms(int socket_fd, int user_id) {
     }
 }
 
-// Delete practice room (completely remove from DB)
+/*
+ * Xóa hoàn toàn một phòng luyện tập khỏi DB:
+ *  - Kèm theo toàn bộ câu hỏi liên quan và session/answer/log.
+ */
 void delete_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -1167,7 +1264,10 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Get all questions in a practice room
+/*
+ * Lấy danh sách câu hỏi thuộc một phòng luyện tập,
+ * phục vụ màn hình quản trị hoặc chỉnh sửa.
+ */
 void get_practice_questions(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -1242,7 +1342,9 @@ void get_practice_questions(int socket_fd, int user_id, int practice_id) {
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Update a practice question
+/*
+ * Cập nhật nội dung một câu hỏi luyện tập (text, đáp án, độ khó, category).
+ */
 void update_practice_question(int socket_fd, int user_id, int practice_id, int question_id, char *new_data) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -1333,7 +1435,10 @@ void update_practice_question(int socket_fd, int user_id, int practice_id, int q
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Create new practice question directly
+/*
+ * Tạo mới câu hỏi luyện tập trực tiếp từ phía admin
+ * cho một phòng luyện tập nhất định.
+ */
 void create_practice_question(int socket_fd, int user_id, int practice_id, char *question_data) {
     pthread_mutex_lock(&server_data.lock);
     
@@ -1435,7 +1540,9 @@ void create_practice_question(int socket_fd, int user_id, int practice_id, char 
     pthread_mutex_unlock(&server_data.lock);
 }
 
-// Import practice questions from CSV
+/*
+ * Import các câu hỏi luyện tập từ file CSV cho một phòng luyện tập.
+ */
 void import_practice_csv(int socket_fd, int user_id, int practice_id, const char *filename) {
     pthread_mutex_lock(&server_data.lock);
     

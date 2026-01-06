@@ -11,6 +11,13 @@ extern sqlite3 *db;
 // Forward declaration
 static void load_room_answers_internal(int room_id, int user_id);
 
+/*
+ * Tạo một phòng thi mới:
+ *  - Chỉ cho phép admin (kiểm tra role trong bảng users)
+ *  - Validate tên phòng, thời gian, số lượng câu hỏi theo độ khó
+ *  - Random chọn câu hỏi từ ngân hàng exam_questions (room_id = 0) và gán cho room
+ *  - Lưu room vào DB và cache vào server_data.rooms, rồi broadcast cho client.
+ */
 void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q, int time_limit, int easy_count, int medium_count, int hard_count) {
   pthread_mutex_lock(&server_data.lock);
 
@@ -200,10 +207,7 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   }
   
   if (selected_count < total_questions) {
-    char warning[256];
-    snprintf(warning, sizeof(warning), 
-             "Warning: Only %d out of %d requested questions were available in the question bank", 
-             selected_count, total_questions);
+    // Not enough questions available in bank for requested distribution; room still created
   }
 
   // ===== THÊM VÀO IN-MEMORY =====
@@ -248,6 +252,11 @@ void create_test_room(int socket_fd, int creator_id, char *room_name, int num_q,
   broadcast_room_created(room_id, room_name, time_limit);
 }
 
+/*
+ * Liệt kê danh sách các phòng thi đang mở:
+ *  - Join với users để lấy tên host
+ *  - Đếm số câu hỏi của từng phòng và trả về cho client.
+ */
 void list_test_rooms(int socket_fd) {
   pthread_mutex_lock(&server_data.lock);
 
@@ -323,6 +332,12 @@ void list_test_rooms(int socket_fd) {
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Cho phép user tham gia một phòng thi:
+ *  - Kiểm tra room tồn tại và đang mở
+ *  - Kiểm tra user đã thi phòng này chưa (has_taken_exam)
+ *  - Thêm bản ghi participants để theo dõi thời gian bắt đầu bài thi.
+ */
 void join_test_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_lock(&server_data.lock);
 
@@ -432,60 +447,10 @@ void join_test_room(int socket_fd, int user_id, int room_id) {
 }
 
 /*
-// REMOVED: set_room_max_attempts - not needed anymore
-void set_room_max_attempts(int socket_fd, int user_id, int room_id, int max_attempts) {
-  pthread_mutex_lock(&server_data.lock);
-  
-  // Kiểm tra user có phải host của room không
-  char check_query[256];
-  snprintf(check_query, sizeof(check_query),
-           "SELECT host_id FROM rooms WHERE id = %d", room_id);
-  
-  sqlite3_stmt *stmt;
-  if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-    server_send(socket_fd, "ERROR|Database error\n");
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  int host_id = -1;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-    host_id = sqlite3_column_int(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-  
-  if (host_id != user_id) {
-    server_send(socket_fd, "ERROR|Only room host can set max attempts\n");
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  // Update max_attempts
-  char update_query[256];
-  snprintf(update_query, sizeof(update_query),
-           "UPDATE rooms SET max_attempts = %d WHERE id = %d",
-           max_attempts, room_id);
-  
-  char *err_msg = NULL;
-  if (sqlite3_exec(db, update_query, NULL, NULL, &err_msg) != SQLITE_OK) {
-    char response[128];
-    snprintf(response, sizeof(response), "ERROR|%s\n", 
-             err_msg ? err_msg : "Failed to update");
-    server_send(socket_fd, response);
-    if (err_msg) sqlite3_free(err_msg);
-    pthread_mutex_unlock(&server_data.lock);
-    return;
-  }
-  
-  char response[128];
-  snprintf(response, sizeof(response), 
-           "SET_MAX_ATTEMPTS_OK|%d|%d\n", room_id, max_attempts);
-  server_send(socket_fd, response);
-  
-  pthread_mutex_unlock(&server_data.lock);
-}
-*/
-
+ * Đóng một phòng thi (host):
+ *  - Chỉ host của phòng được đóng room
+ *  - Cập nhật is_active trong DB, dùng để chặn JOIN_ROOM tiếp.
+ */
 void close_room(int socket_fd, int user_id, int room_id) {
   pthread_mutex_lock(&server_data.lock);
 

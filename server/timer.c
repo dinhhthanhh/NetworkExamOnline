@@ -6,22 +6,10 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-RoomTimer room_timers[MAX_ROOMS];
-
-void start_room_timer(int room_id, int time_limit)
-{
-  pthread_mutex_lock(&server_data.lock);
-
-  if (room_id < MAX_ROOMS)
-  {
-    room_timers[room_id].room_id = room_id;
-    room_timers[room_id].time_remaining = time_limit;
-    room_timers[room_id].start_time = time(NULL);
-  }
-
-  pthread_mutex_unlock(&server_data.lock);
-}
-
+/*
+ * Gửi thông tin thời gian còn lại của một phòng thi tới tất cả
+ * thí sinh trong phòng (hiện tại mới xây dựng message, chưa gửi ra client).
+ */
 void broadcast_time_update(int room_id, int time_remaining)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -41,6 +29,12 @@ void broadcast_time_update(int room_id, int time_remaining)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Quét toàn bộ phòng thi đang STARTED để kiểm tra hết giờ:
+ *  - Gửi TIME_UPDATE định kỳ (thông qua broadcast_time_update)
+ *  - Khi hết thời gian, auto-submit cho các user đang online và
+ *    ghi kết quả vào bảng results.
+ */
 void check_room_timeouts(void)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -63,7 +57,7 @@ void check_room_timeouts(void)
       else if (room->room_status == 1)
       {
         // Time's up - auto-submit CHỈ users đang ONLINE
-        room->room_status = 2; // ENDED
+        room->room_status = 0; // Reset về WAITING để có thể mở lại kỳ thi
 
         // Query danh sách participants từ DB để lấy users đã bắt đầu thi
         char participant_query[512];
@@ -154,31 +148,6 @@ void check_room_timeouts(void)
           }
           sqlite3_finalize(stmt);
         }
-      }
-    }
-  }
-
-  pthread_mutex_unlock(&server_data.lock);
-}
-
-void cleanup_expired_rooms(void)
-{
-  pthread_mutex_lock(&server_data.lock);
-
-  time_t now = time(NULL);
-  const int ROOM_EXPIRE_TIME = 3600; // 1 hour
-
-  for (int i = 0; i < server_data.room_count; i++)
-  {
-    TestRoom *room = &server_data.rooms[i];
-
-    if (room->room_status == 2)  // ENDED
-    { // Finished
-      int age = (int)(now - room->end_time);
-
-      if (age > ROOM_EXPIRE_TIME)
-      {
-        // Mark as expired (can be archived)
       }
     }
   }

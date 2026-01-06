@@ -4,6 +4,13 @@
 extern sqlite3 *db;
 extern ServerData server_data;
 
+/*
+ * Khởi tạo kết nối SQLite và toàn bộ schema cần thiết:
+ *  - Bảng users, results, activity_log, rooms, participants, exam_answers
+ *  - Cấu trúc mới cho exam_questions, practice_questions và các bảng practice
+ *  - Thêm các cột mới phục vụ role, is_online, room_status, exam_start_time
+ *  - Tạo tài khoản admin mặc định nếu chưa tồn tại.
+ */
 void init_database() {
   char *err_msg = 0;
   int rc = sqlite3_open("quiz_app.db", &db);
@@ -220,6 +227,10 @@ void init_database() {
   printf("Default admin account: username='admin', password='admin123'\n");
 }
 
+/*
+ * Ghi log hoạt động người dùng vào bảng activity_log
+ * để phục vụ audit và thống kê sau này.
+ */
 void log_activity(int user_id, const char *action, const char *details) {
   char query[500];
   char *err_msg = 0;
@@ -234,7 +245,10 @@ void log_activity(int user_id, const char *action, const char *details) {
   }
 }
 
-// Load tất cả users từ DB vào in-memory structure
+/*
+ * Nạp toàn bộ danh sách user từ DB vào mảng server_data.users
+ * khi khởi động server, mặc định tất cả ở trạng thái offline.
+ */
 void load_users_from_db(void) {
   char query[200];
   sqlite3_stmt *stmt;

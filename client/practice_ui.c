@@ -17,45 +17,8 @@ PracticeSession current_practice = {0};
 PracticeRoomInfo practice_rooms[50];
 int practice_room_count = 0;
 
-// Timer label for countdown
-static GtkWidget *practice_timer_label = NULL;
-
-// Timer callback - countdown
-static gboolean update_practice_timer(gpointer data) {
-    if (!current_practice.start_time || current_practice.time_limit <= 0) {
-        return FALSE;
-    }
-    
-    time_t now = time(NULL);
-    long elapsed = now - current_practice.start_time;
-    long remaining = (current_practice.time_limit * 60) - elapsed;
-    
-    if (remaining <= 0) {
-        // Time's up - auto finish
-        if (practice_timer_label && GTK_IS_WIDGET(practice_timer_label)) {
-            gtk_label_set_markup(GTK_LABEL(practice_timer_label),
-                "<span foreground='red' weight='bold' size='14000'>⏰ TIME'S UP!</span>");
-        }
-        current_practice.timer_id = 0;
-        on_finish_practice(NULL, NULL);
-        return FALSE;
-    }
-    
-    int minutes = remaining / 60;
-    int seconds = remaining % 60;
-    
-    char timer_text[128];
-    const char *color = (remaining < 300) ? "red" : "#2c3e50"; // Red if < 5 minutes
-    snprintf(timer_text, sizeof(timer_text),
-             "<span foreground='%s' weight='bold' size='14000'>⏱️ Time: %02d:%02d</span>",
-             color, minutes, seconds);
-    
-    if (practice_timer_label && GTK_IS_WIDGET(practice_timer_label)) {
-        gtk_label_set_markup(GTK_LABEL(practice_timer_label), timer_text);
-    }
-    
-    return TRUE; // Continue timer
-}
+// Flag to distinguish practice mode vs results view
+static int practice_in_results_view = 0;
 
 // Callback for practice list refresh
 void on_refresh_practice_list(GtkWidget *widget, gpointer data);
@@ -77,6 +40,20 @@ static void on_practice_closed_broadcast(int practice_id, const char *room_name)
 // Internal helpers
 static void on_practice_nav_clicked(GtkWidget *widget, gpointer data);
 static void on_practice_change_question(int new_index);
+
+// Helper for toggling Show Answers checkbox in create-practice dialog
+static void on_show_answers_toggled(GtkToggleButton *btn, gpointer user_data) {
+    GtkWidget *spin = GTK_WIDGET(user_data);
+    gboolean active = gtk_toggle_button_get_active(btn);
+    if (active) {
+        // Show Answers = YES -> disable cooldown and reset to 0
+        gtk_widget_set_sensitive(spin, FALSE);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin), 0);
+    } else {
+        // Show Answers = NO -> allow editing cooldown
+        gtk_widget_set_sensitive(spin, TRUE);
+    }
+}
 
 // Determine navigation button color based on question status
 static const char *practice_question_status_color(const PracticeQuestion *q) {
@@ -153,11 +130,6 @@ void cleanup_practice_session(void) {
         broadcast_stop_listener();
     }
     
-    // Clear timer label reference
-    practice_timer_label = NULL;
-    
-    // Clear practice data
-    memset(&current_practice, 0, sizeof(current_practice));
 }
 
 // Show practice room list for users
@@ -233,20 +205,20 @@ void show_practice_list_screen(void) {
         gtk_label_set_xalign(GTK_LABEL(name_label), 0);
         gtk_box_pack_start(GTK_BOX(room_box), name_label, FALSE, FALSE, 0);
         
-        // Room info
+        // Room info (time_limit is used as cooldown minutes when show_answers = 0)
         char info_text[500];
-        char time_text[64];
-        if (room->time_limit > 0) {
-            snprintf(time_text, sizeof(time_text), "%d min", room->time_limit);
+        char cooldown_text[64];
+        if (!room->show_answers && room->time_limit > 0) {
+            snprintf(cooldown_text, sizeof(cooldown_text), "%d min", room->time_limit);
         } else {
-            snprintf(time_text, sizeof(time_text), "Unlimited");
+            snprintf(cooldown_text, sizeof(cooldown_text), "None");
         }
 
         snprintf(info_text, sizeof(info_text),
-                "Creator: %s | Questions: %d | Time: %s | Show Answers: %s | Participants: %d",
+                "Creator: %s | Questions: %d | Cooldown: %s | Show Answers: %s | Participants: %d",
                 room->creator_name,
                 room->num_questions,
-                time_text,
+                cooldown_text,
                 room->show_answers ? "Yes" : "No",
                 room->active_participants);
         
@@ -307,6 +279,43 @@ void show_practice_list_screen(void) {
 // Join practice room callback
 void on_join_practice(GtkWidget *widget, gpointer data) {
     int practice_id = GPOINTER_TO_INT(data);
+
+    // If we already have a finished session for this practice, ask user
+    // whether to practice again or just view last details.
+    if (current_practice.is_finished &&
+        current_practice.practice_id == practice_id &&
+        current_practice.num_questions > 0) {
+
+        GtkWidget *dialog = gtk_message_dialog_new(
+            GTK_WINDOW(main_window),
+            GTK_DIALOG_MODAL,
+            GTK_MESSAGE_QUESTION,
+            GTK_BUTTONS_NONE,
+            "You have a completed practice session.");
+
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog),
+            "Do you want to practice again or view your last results?");
+
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog),
+                               "Practice Again", GTK_RESPONSE_YES,
+                               "View Details", GTK_RESPONSE_NO,
+                               "Cancel", GTK_RESPONSE_CANCEL,
+                               NULL);
+
+        gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+
+        if (response == GTK_RESPONSE_NO) {
+            // Just view last results using unified results view
+            on_view_practice_results(NULL, GINT_TO_POINTER(practice_id));
+            return;
+        } else if (response == GTK_RESPONSE_CANCEL) {
+            // Stay on current screen
+            return;
+        }
+        // GTK_RESPONSE_YES falls through to actually join again
+    }
     
     char msg[128];
     snprintf(msg, sizeof(msg), "JOIN_PRACTICE|%d\n", practice_id);
@@ -333,8 +342,6 @@ void on_join_practice(GtkWidget *widget, gpointer data) {
     
     // Parse response: JOIN_PRACTICE_OK|practice_id|name|time_limit|show_answers|num_q|session_id|questions
     char *response_data = recv_buf + 17;
-
-    memset(&current_practice, 0, sizeof(current_practice));
 
     char *token = strtok(response_data, "|");
     if (!token) {
@@ -436,6 +443,7 @@ void on_join_practice(GtkWidget *widget, gpointer data) {
 
 // Show practice room with questions
 void show_practice_room_screen(void) {
+    practice_in_results_view = 0; // we're in doing-practice mode
     if (current_practice.num_questions == 0) {
         show_error_dialog("No questions in practice room");
         return;
@@ -465,27 +473,11 @@ void show_practice_room_screen(void) {
     gtk_label_set_markup(GTK_LABEL(title), title_text);
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
     
-    // Timer label (only if time limit exists)
-    if (current_practice.time_limit > 0) {
-        practice_timer_label = gtk_label_new(NULL);
-        gtk_box_pack_start(GTK_BOX(header_box), practice_timer_label, FALSE, FALSE, 0);
-        
-        // Start timer if not already running
-        if (current_practice.timer_id == 0) {
-            current_practice.timer_id = g_timeout_add(1000, update_practice_timer, NULL);
-            update_practice_timer(NULL); // Update immediately
-        }
-    } else {
-        // Show elapsed time for unlimited practice
-        time_t elapsed = time(NULL) - current_practice.start_time;
-        char time_text[128];
-        snprintf(time_text, sizeof(time_text),
-                "<span foreground='#2c3e50' weight='bold' size='12000'>⏱️ Time: %ld min</span>",
-                elapsed / 60);
-        practice_timer_label = gtk_label_new(NULL);
-        gtk_label_set_markup(GTK_LABEL(practice_timer_label), time_text);
-        gtk_box_pack_start(GTK_BOX(header_box), practice_timer_label, FALSE, FALSE, 0);
-    }
+    // Practice: chỉ hiển thị thông tin mode, không tính và không auto-finish theo thời gian
+    GtkWidget *practice_timer_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(practice_timer_label),
+        "<span foreground='#2c3e50' size='11000'>Practice mode (no time limit)</span>");
+    gtk_box_pack_start(GTK_BOX(header_box), practice_timer_label, FALSE, FALSE, 0);
     
     gtk_box_pack_start(GTK_BOX(left_panel), header_box, FALSE, FALSE, 0);
     
@@ -681,7 +673,9 @@ void show_practice_room_screen(void) {
 
     // Ensure we listen for PRACTICE_CLOSED broadcasts while in practice mode
     broadcast_on_practice_closed(on_practice_closed_broadcast);
-    broadcast_start_listener();
+    if (!broadcast_is_listening()) {
+        broadcast_start_listener();
+    }
 
     show_view(main_hbox);
 }
@@ -694,7 +688,15 @@ void on_submit_practice_answer(GtkWidget *widget, gpointer data) {
     
     int answer_idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "answer_index"));
     int question_num = current_practice.current_question;
-    
+
+    if (question_num < 0 || question_num >= current_practice.num_questions) {
+        return;
+    }
+
+    // Cập nhật trạng thái local ngay lập tức để UI phản ánh lựa chọn
+    PracticeQuestion *q = &current_practice.questions[question_num];
+    q->user_answer = answer_idx;
+
     char msg[128];
     snprintf(msg, sizeof(msg), "SUBMIT_PRACTICE_ANSWER|%d|%d|%d\n",
             current_practice.practice_id, question_num, answer_idx);
@@ -705,18 +707,20 @@ void on_submit_practice_answer(GtkWidget *widget, gpointer data) {
     
     if (n > 0 && strncmp(recv_buf, "SUBMIT_PRACTICE_ANSWER_OK|", 27) == 0) {
         // Parse response: SUBMIT_PRACTICE_ANSWER_OK|question_num|answer|is_correct
-        int q_num, ans, is_correct;
+        int q_num = -1, ans = -1, is_correct = -1;
         sscanf(recv_buf + 27, "%d|%d|%d", &q_num, &ans, &is_correct);
-        
-        current_practice.questions[q_num].user_answer = ans;
-        
-        if (is_correct != -1) {
-            current_practice.questions[q_num].is_correct = is_correct;
+
+        if (q_num >= 0 && q_num < current_practice.num_questions) {
+            PracticeQuestion *srv_q = &current_practice.questions[q_num];
+            srv_q->user_answer = ans;
+            if (is_correct != -1) {
+                srv_q->is_correct = is_correct;
+            }
         }
-        
-        // Refresh display
-        show_practice_room_screen();
     }
+
+    // Luôn refresh UI để giữ màu nút và đáp án đã chọn
+    show_practice_room_screen();
 }
 
 // Finish practice callback
@@ -737,11 +741,14 @@ void on_finish_practice(GtkWidget *widget, gpointer data) {
     if (n > 0 && strncmp(recv_buf, "FINISH_PRACTICE_OK|", 19) == 0) {
         int practice_id, score, total;
         sscanf(recv_buf + 19, "%d|%d|%d", &practice_id, &score, &total);
-        
+
+        current_practice.practice_id = practice_id;
         current_practice.score = score;
         current_practice.is_finished = 1;
-        
-        show_practice_results_screen();
+
+        // Load per-question results from server and show finished layout
+        on_view_practice_results(NULL, GINT_TO_POINTER(practice_id));
+        return;
     } else {
         show_error_dialog("Failed to finish practice");
     }
@@ -749,6 +756,7 @@ void on_finish_practice(GtkWidget *widget, gpointer data) {
 
 // Show practice results
 void show_practice_results_screen(void) {
+    practice_in_results_view = 1; // now in summary/results mode
     // Set flag to indicate we're in results mode
     current_practice.is_finished = 1;
     
@@ -832,7 +840,8 @@ void show_practice_results_screen(void) {
     GtkWidget *restart_btn = gtk_button_new_with_label("PRACTICE AGAIN");
     gtk_widget_set_size_request(restart_btn, -1, 40);
     style_button(restart_btn, "#3498db");
-    g_signal_connect(restart_btn, "clicked", G_CALLBACK(on_restart_practice), NULL);
+    g_signal_connect(restart_btn, "clicked", G_CALLBACK(on_join_practice),
+                     GINT_TO_POINTER(current_practice.practice_id));
     gtk_box_pack_start(GTK_BOX(action_box), restart_btn, FALSE, FALSE, 0);
     
     GtkWidget *back_btn = gtk_button_new_with_label("BACK TO LIST");
@@ -988,10 +997,41 @@ void show_practice_results_screen(void) {
     show_view(main_hbox);
 }
 
-// Restart practice callback
+// Restart practice callback: ask user for confirmation and create a fresh session
 void on_restart_practice(GtkWidget *widget, gpointer data) {
+    (void)widget;
     int practice_id = current_practice.practice_id;
-    on_join_practice(widget, GINT_TO_POINTER(practice_id));
+
+    GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(main_window),
+        GTK_DIALOG_MODAL,
+        GTK_MESSAGE_QUESTION,
+        GTK_BUTTONS_NONE,
+        "Practice again or view details?");
+
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog),
+        "Do you want to start a new practice session or just view your last results?");
+
+    gtk_dialog_add_buttons(GTK_DIALOG(dialog),
+                           "Practice Again", GTK_RESPONSE_YES,
+                           "View Details", GTK_RESPONSE_NO,
+                           "Back", GTK_RESPONSE_CANCEL,
+                           NULL);
+
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+
+    if (response == GTK_RESPONSE_YES) {
+        // JOIN_PRACTICE sẽ tự tạo session mới nếu không còn session active
+        on_join_practice(NULL, GINT_TO_POINTER(practice_id));
+    } else if (response == GTK_RESPONSE_NO) {
+        // Xem lại kết quả lần gần nhất
+        on_view_practice_results(NULL, GINT_TO_POINTER(practice_id));
+    } else {
+        // Quay về list rooms
+        show_practice_list_screen();
+    }
 }
 
 // Admin: Show practice management menu - REMOVED
@@ -1028,18 +1068,23 @@ void show_create_practice_dialog(void) {
     gtk_grid_attach(GTK_GRID(grid), name_label, 0, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), name_entry, 1, 0, 1, 1);
     
-    // Time limit
-    GtkWidget *time_label = gtk_label_new("Time Limit (minutes, 0=unlimited):");
-    GtkWidget *time_spin = gtk_spin_button_new_with_range(0, 300, 5);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(time_spin), 30);
-    gtk_grid_attach(GTK_GRID(grid), time_label, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), time_spin, 1, 1, 1, 1);
-    
-    // Show answers
+    // Show answers (đặt trước cho đúng thứ tự nhập liệu)
     GtkWidget *show_label = gtk_label_new("Show Correct Answers:");
     GtkWidget *show_check = gtk_check_button_new_with_label("Yes");
-    gtk_grid_attach(GTK_GRID(grid), show_label, 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), show_check, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), show_label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), show_check, 1, 1, 1, 1);
+
+    // Cooldown time between full practices (minutes, 0 = no limit).
+    // Chỉ dùng khi Show Answers = NO.
+    GtkWidget *time_label = gtk_label_new("Cooldown between practices (minutes, 0 = no limit):");
+    GtkWidget *time_spin = gtk_spin_button_new_with_range(0, 300, 5);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(time_spin), 0);
+    gtk_grid_attach(GTK_GRID(grid), time_label, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), time_spin, 1, 2, 1, 1);
+
+    // Nếu admin bật Show Answers = YES thì khóa không cho chỉnh cooldown
+    gtk_widget_set_sensitive(time_spin, TRUE); // mặc định: show_answers = NO
+    g_signal_connect(show_check, "toggled", G_CALLBACK(on_show_answers_toggled), time_spin);
     
     gtk_container_add(GTK_CONTAINER(content_area), grid);
     gtk_widget_show_all(dialog);
@@ -1055,8 +1100,8 @@ void show_create_practice_dialog(void) {
             show_error_dialog("Room name cannot be empty");
         } else {
             char msg[256];
-            snprintf(msg, sizeof(msg), "CREATE_PRACTICE|%s|%d|%d\n", 
-                    room_name, time_limit, show_answers);
+                    snprintf(msg, sizeof(msg), "CREATE_PRACTICE|%s|%d|%d\n", 
+                        room_name, time_limit, show_answers);
             send_message(msg);
             
             char recv_buf[512];
@@ -1179,16 +1224,15 @@ void show_manage_practice_rooms(void) {
                        GINT_TO_POINTER(room->practice_id));
         gtk_box_pack_start(GTK_BOX(btn_box), questions_btn, TRUE, TRUE, 0);
         
-        GtkWidget *view_btn = gtk_button_new_with_label("Members");
-        style_button(view_btn, "#3498db");
-        g_signal_connect(view_btn, "clicked", G_CALLBACK(on_view_participants_clicked),
-                       GINT_TO_POINTER(room->practice_id));
-        gtk_box_pack_start(GTK_BOX(btn_box), view_btn, TRUE, TRUE, 0);
-        
+        // Chỉ cho xoá khi không có active participants
         GtkWidget *delete_btn = gtk_button_new_with_label("DELETE");
         style_button(delete_btn, "#c0392b");
-        g_signal_connect(delete_btn, "clicked", G_CALLBACK(on_delete_practice_clicked),
-                       GINT_TO_POINTER(room->practice_id));
+        if (room->active_participants > 0) {
+            gtk_widget_set_sensitive(delete_btn, FALSE);
+        } else {
+            g_signal_connect(delete_btn, "clicked", G_CALLBACK(on_delete_practice_clicked),
+                           GINT_TO_POINTER(room->practice_id));
+        }
         gtk_box_pack_start(GTK_BOX(btn_box), delete_btn, TRUE, TRUE, 0);
         
         gtk_box_pack_start(GTK_BOX(room_box), btn_box, FALSE, FALSE, 0);
@@ -1333,7 +1377,7 @@ static void on_practice_closed_broadcast(int practice_id, const char *room_name)
     show_practice_list_screen();
 }
 
-// ===== Detailed practice results =====
+// ===== Detailed practice results loader (reuses practice-style results UI) =====
 
 void on_view_practice_results(GtkWidget *widget, gpointer data) {
     (void)widget;
@@ -1380,93 +1424,17 @@ void on_view_practice_results(GtkWidget *widget, gpointer data) {
     int score = atoi(score_str);
     int total = atoi(total_str);
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_widget_set_margin_top(vbox, 20);
-    gtk_widget_set_margin_start(vbox, 20);
-    gtk_widget_set_margin_end(vbox, 20);
-    gtk_widget_set_margin_bottom(vbox, 20);
+    // Update current_practice summary
+    current_practice.practice_id = practice_id_resp;
+    current_practice.score = score;
+    current_practice.num_questions = total;
+    current_practice.is_finished = 1;
 
-    // Title
-    GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title),
-        "<span foreground='#2c3e50' weight='bold' size='20000'>Practice Detailed Results</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
-
-    // Summary
-    double percentage = total > 0 ? (double)score / total * 100.0 : 0.0;
-    char summary_text[256];
-    snprintf(summary_text, sizeof(summary_text),
-             "<span size='16000'>Score: <b>%d/%d</b> (%.1f%%)</span>",
-             score, total, percentage);
-    GtkWidget *summary_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(summary_label), summary_text);
-    gtk_box_pack_start(GTK_BOX(vbox), summary_label, FALSE, FALSE, 0);
-
-    // Optional difficulty stats (only if this is current practice)
-    if (practice_id_resp == current_practice.practice_id && current_practice.num_questions > 0) {
-        int easy_total = 0, medium_total = 0, hard_total = 0;
-        int easy_correct = 0, medium_correct = 0, hard_correct = 0;
-        for (int i = 0; i < current_practice.num_questions; i++) {
-            PracticeQuestion *q = &current_practice.questions[i];
-            if (strcmp(q->difficulty, "Easy") == 0) {
-                easy_total++;
-                if (q->is_correct == 1) easy_correct++;
-            } else if (strcmp(q->difficulty, "Medium") == 0) {
-                medium_total++;
-                if (q->is_correct == 1) medium_correct++;
-            } else if (strcmp(q->difficulty, "Hard") == 0) {
-                hard_total++;
-                if (q->is_correct == 1) hard_correct++;
-            }
-        }
-
-        if (easy_total + medium_total + hard_total > 0) {
-            char diff_stats[256];
-            snprintf(diff_stats, sizeof(diff_stats),
-                     "<span size='12000'>Easy: <b>%d/%d</b>  |  Medium: <b>%d/%d</b>  |  Hard: <b>%d/%d</b></span>",
-                     easy_correct, easy_total,
-                     medium_correct, medium_total,
-                     hard_correct, hard_total);
-            GtkWidget *diff_label = gtk_label_new(NULL);
-            gtk_label_set_markup(GTK_LABEL(diff_label), diff_stats);
-            gtk_box_pack_start(GTK_BOX(vbox), diff_label, FALSE, FALSE, 0);
-        }
-        
-        // Add navigation for current practice questions
-        GtkWidget *sep_nav = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-        gtk_box_pack_start(GTK_BOX(vbox), sep_nav, FALSE, FALSE, 0);
-        
-        GtkWidget *nav_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-        for (int i = 0; i < current_practice.num_questions; i++) {
-            char btn_text[16];
-            snprintf(btn_text, sizeof(btn_text), "%d", i + 1);
-
-            GtkWidget *nav_btn = gtk_button_new_with_label(btn_text);
-
-            PracticeQuestion *q = &current_practice.questions[i];
-            style_button(nav_btn, practice_question_status_color(q));
-
-            gtk_box_pack_start(GTK_BOX(nav_box), nav_btn, TRUE, TRUE, 0);
-        }
-        gtk_box_pack_start(GTK_BOX(vbox), nav_box, FALSE, FALSE, 0);
-    }
-
-    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 5);
-
-    // Scrolled window for questions
-    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
-                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(scroll, -1, 400);
-
-    GtkWidget *q_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_container_add(GTK_CONTAINER(scroll), q_list_box);
-    gtk_box_pack_start(GTK_BOX(vbox), scroll, TRUE, TRUE, 0);
-
+    // Fill per-question answers/result into current_practice
     int q_index = 0;
     char *q_token;
-    while ((q_token = strtok_r(NULL, "|", &saveptr1)) != NULL) {
+    while ((q_token = strtok_r(NULL, "|", &saveptr1)) != NULL &&
+           q_index < 100) {
         char q_copy[BUFFER_SIZE];
         strncpy(q_copy, q_token, sizeof(q_copy) - 1);
         q_copy[sizeof(q_copy) - 1] = '\0';
@@ -1487,82 +1455,42 @@ void on_view_practice_results(GtkWidget *widget, gpointer data) {
             continue;
         }
 
-        int correct = atoi(correct_str);
         int user_ans = atoi(user_ans_str);
         int is_correct = atoi(is_correct_str);
-        (void)is_correct; // not strictly needed for per-option colors
 
-        GtkWidget *q_frame = gtk_frame_new(NULL);
-        GtkWidget *q_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-        gtk_widget_set_margin_start(q_box, 10);
-        gtk_widget_set_margin_end(q_box, 10);
-        gtk_widget_set_margin_top(q_box, 10);
-        gtk_widget_set_margin_bottom(q_box, 10);
+        PracticeQuestion *q = &current_practice.questions[q_index];
 
-        char q_title[512];
-        snprintf(q_title, sizeof(q_title),
-                 "<b>Q%d.</b> %s", q_index + 1, text);
-        GtkWidget *q_label = gtk_label_new(NULL);
-        gtk_label_set_markup(GTK_LABEL(q_label), q_title);
-        gtk_label_set_line_wrap(GTK_LABEL(q_label), TRUE);
-        gtk_label_set_xalign(GTK_LABEL(q_label), 0);
-        gtk_box_pack_start(GTK_BOX(q_box), q_label, FALSE, FALSE, 0);
-
-        const char *options[4] = { optA, optB, optC, optD };
-        for (int i = 0; i < 4; i++) {
-            const char *opt_text = options[i] ? options[i] : "";
-            const char *color = "#2c3e50";
-            const char *prefix = "";
-
-            if (i == correct) {
-                color = "#27ae60"; // green for correct answer
-                prefix = "✅ ";
-            } else if (i == user_ans && i != correct) {
-                color = "#e74c3c"; // red for wrong selected answer
-                prefix = "❌ ";
-            } else if (i == user_ans) {
-                // Correct and selected - already handled as correct
+        // If we don't already have question text/options (e.g. coming from list),
+        // populate them from server response.
+        if (q->id == 0) {
+            q->id = atoi(id_str);
+            strncpy(q->text, text, sizeof(q->text) - 1);
+            strncpy(q->options[0], optA, sizeof(q->options[0]) - 1);
+            strncpy(q->options[1], optB, sizeof(q->options[1]) - 1);
+            strncpy(q->options[2], optC, sizeof(q->options[2]) - 1);
+            strncpy(q->options[3], optD, sizeof(q->options[3]) - 1);
+            // Difficulty is not returned here; default if empty
+            if (strlen(q->difficulty) == 0) {
+                strncpy(q->difficulty, "Medium", sizeof(q->difficulty) - 1);
             }
-
-            char opt_line[512];
-            snprintf(opt_line, sizeof(opt_line),
-                     "<span foreground='%s'>%s%c. %s</span>",
-                     color,
-                     prefix,
-                     'A' + i,
-                     opt_text);
-
-            GtkWidget *opt_label = gtk_label_new(NULL);
-            gtk_label_set_markup(GTK_LABEL(opt_label), opt_line);
-            gtk_label_set_xalign(GTK_LABEL(opt_label), 0);
-            gtk_box_pack_start(GTK_BOX(q_box), opt_label, FALSE, FALSE, 0);
         }
 
-        gtk_container_add(GTK_CONTAINER(q_frame), q_box);
-        gtk_box_pack_start(GTK_BOX(q_list_box), q_frame, FALSE, FALSE, 0);
+        q->user_answer = user_ans;
+        q->is_correct = is_correct;
+
         q_index++;
     }
 
-    if (q_index == 0) {
-        GtkWidget *empty_label = gtk_label_new("No questions found in results.");
-        gtk_box_pack_start(GTK_BOX(q_list_box), empty_label, FALSE, FALSE, 0);
+    // Ensure num_questions does not exceed what we actually parsed
+    current_practice.num_questions = q_index;
+
+    // Show unified practice-style results view
+    practice_in_results_view = 1;
+    if (current_practice.current_question < 0 ||
+        current_practice.current_question >= current_practice.num_questions) {
+        current_practice.current_question = 0;
     }
-
-    // Bottom buttons
-    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *back_btn = gtk_button_new_with_label("BACK");
-    style_button(back_btn, "#95a5a6");
-    g_signal_connect(back_btn, "clicked", G_CALLBACK(show_practice_results_screen), NULL);
-    gtk_box_pack_start(GTK_BOX(btn_box), back_btn, TRUE, TRUE, 0);
-
-    GtkWidget *list_btn = gtk_button_new_with_label("BACK TO LIST");
-    style_button(list_btn, "#bdc3c7");
-    g_signal_connect(list_btn, "clicked", G_CALLBACK(show_practice_list_screen), NULL);
-    gtk_box_pack_start(GTK_BOX(btn_box), list_btn, TRUE, TRUE, 0);
-
-    gtk_box_pack_start(GTK_BOX(vbox), btn_box, FALSE, FALSE, 10);
-
-    show_view(vbox);
+    show_practice_results_screen();
 }
 
 // ===== Internal helpers =====
@@ -1572,7 +1500,12 @@ static void on_practice_change_question(int new_index) {
         return;
     }
     current_practice.current_question = new_index;
-    show_practice_room_screen();
+    // Điều hướng khác nhau tùy theo đang làm bài hay xem kết quả
+    if (practice_in_results_view) {
+        show_practice_results_screen();
+    } else {
+        show_practice_room_screen();
+    }
 }
 
 static void on_practice_nav_clicked(GtkWidget *widget, gpointer data) {

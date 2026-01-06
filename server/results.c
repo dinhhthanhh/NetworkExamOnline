@@ -5,7 +5,10 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-// Helper: Tìm room index trong server_data.rooms[]
+/*
+ * Helper nội bộ: tìm index của room trong mảng server_data.rooms
+ * theo room_id thật lấy từ DB.
+ */
 static int find_room_index(int room_id) {
     for (int i = 0; i < server_data.room_count; i++) {
         if (server_data.rooms[i].room_id == room_id) {
@@ -15,7 +18,10 @@ static int find_room_index(int room_id) {
     return -1;
 }
 
-// Helper: Tìm user index trong room->participants[]
+/*
+ * Helper nội bộ: tìm vị trí của một user trong danh sách participants
+ * của một TestRoom.
+ */
 static int find_participant_index(TestRoom *room, int user_id) {
     for (int i = 0; i < room->participant_count; i++) {
         if (room->participants[i] == user_id) {
@@ -25,7 +31,10 @@ static int find_participant_index(TestRoom *room, int user_id) {
     return -1;
 }
 
-// Helper: Ghi toàn bộ đáp án của 1 user vào DB (batch write)
+/*
+ * Helper: ghi toàn bộ đáp án đang lưu in-memory của một user trong room
+ * xuống bảng exam_answers theo dạng batch (xóa cũ, thêm mới trong transaction).
+ */
 static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int user_idx) {
     // Xóa các đáp án cũ trong DB
     char delete_query[256];
@@ -66,7 +75,12 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
     sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
 }
 
-// Lưu đáp án vào IN-MEMORY (thay vì ghi trực tiếp DB)
+/*
+ * Lưu tạm thời đáp án vào bộ nhớ RAM cho một câu hỏi:
+ *  - Validate answer và quyền tham gia phòng
+ *  - Map question_id thực sang index trong mảng
+ *  - Tự động flush xuống DB mỗi 5 câu hoặc khi làm xong toàn bộ.
+ */
 void save_answer(int socket_fd, int user_id, int room_id, int question_id, int selected_answer)
 {
     pthread_mutex_lock(&server_data.lock);
@@ -139,6 +153,10 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Submit đáp án theo số thứ tự câu hỏi (logic cũ, vẫn giữ để tương thích):
+ *  - Ghi trực tiếp vào mảng room->answers[room_id][question_num].
+ */
 void submit_answer(int socket_fd, int user_id, int room_id, int question_num, int answer)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -168,6 +186,13 @@ void submit_answer(int socket_fd, int user_id, int room_id, int question_num, in
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Người dùng nộp bài thi:
+ *  - Flush toàn bộ đáp án in-memory xuống DB
+ *  - Kiểm tra đã bắt đầu thi, kiểm tra hết giờ
+ *  - Tính điểm từ exam_answers vs exam_questions và lưu vào results
+ *  - Đánh dấu has_taken_exam để không được thi lại.
+ */
 void submit_test(int socket_fd, int user_id, int room_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -298,6 +323,10 @@ void submit_test(int socket_fd, int user_id, int room_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Trả về kết quả tổng quan của phòng thi từ mảng in-memory TestRoom:
+ *  - Liệt kê từng user, điểm đạt được và tổng số câu hỏi.
+ */
 void view_results(int socket_fd, int room_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -319,10 +348,12 @@ void view_results(int socket_fd, int room_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
-// Auto-submit khi user disconnect hoặc hết thời gian.
-// LƯU Ý: Hàm này GIẢ ĐỊNH server_data.lock ĐÃ ĐƯỢC GIỮ bởi caller.
-// - handle_client: nếu muốn gọi trực tiếp, phải lock trước.
-// - handle_resume_exam: đã lock rooms/ServerData trước khi gọi.
+/*
+ * Auto-submit khi user disconnect hoặc hết thời gian (dùng trong rooms/timer):
+ *  - Giả định lock đã được giữ bởi caller
+ *  - Nếu chưa submit thì tính điểm từ exam_answers và lưu vào results
+ *  - Đánh dấu has_taken_exam ở cả participants và room_participants.
+ */
 void auto_submit_on_disconnect(int user_id, int room_id)
 {
   
@@ -427,7 +458,10 @@ void auto_submit_on_disconnect(int user_id, int room_id)
     log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
 }
 
-// Public wrapper để flush answers (dùng cho external calls)
+/*
+ * Hàm public dùng cho module khác (ví dụ network) để ép flush toàn bộ
+ * đáp án của một user trong một phòng xuống DB exam_answers.
+ */
 void flush_user_answers(int user_id, int room_id) {
     pthread_mutex_lock(&server_data.lock);
     int room_idx = find_room_index(room_id);

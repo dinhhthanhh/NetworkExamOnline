@@ -5,6 +5,11 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
+/*
+ * Lấy bảng xếp hạng theo tổng điểm của tất cả user (trừ admin):
+ *  - Gom SUM(score) và COUNT(tests) từ bảng results
+ *  - Trả về top N theo tham số limit.
+ */
 void get_leaderboard(int socket_fd, int limit)
 {
   char query[500];
@@ -27,7 +32,6 @@ void get_leaderboard(int socket_fd, int limit)
     int rank = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-      // int user_id = sqlite3_column_int(stmt, 0);  // Unused - commented out
       const char *username = (const char *)sqlite3_column_text(stmt, 1);
       int total_score = sqlite3_column_int(stmt, 2);
       int tests_completed = sqlite3_column_int(stmt, 3);
@@ -47,6 +51,10 @@ void get_leaderboard(int socket_fd, int limit)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Thống kê tổng quan kết quả thi của một user:
+ *  - Tổng số bài thi, điểm trung bình, điểm cao nhất, tổng điểm.
+ */
 void get_user_statistics(int socket_fd, int user_id)
 {
   char query[500];
@@ -81,6 +89,10 @@ void get_user_statistics(int socket_fd, int user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Thống kê theo category (hiện tại là All Categories):
+ *  - Số bài thi và số bài đạt (điểm >= 50%) của user.
+ */
 void get_category_stats(int socket_fd, int user_id)
 {
   char query[800];
@@ -119,6 +131,10 @@ void get_category_stats(int socket_fd, int user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Thống kê theo độ khó (hiện tại All Difficulties):
+ *  - Số bài thi và tỉ lệ điểm trung bình (pass_rate) của user.
+ */
 void get_difficulty_stats(int socket_fd, int user_id)
 {
   char query[800];
@@ -157,6 +173,10 @@ void get_difficulty_stats(int socket_fd, int user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Lấy lịch sử tối đa 20 bài thi gần nhất của user:
+ *  - Kèm tên phòng, điểm, tổng số câu, thời gian làm và thời điểm hoàn thành.
+ */
 void get_user_test_history(int socket_fd, int user_id)
 {
   char query[800];

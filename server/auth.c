@@ -8,7 +8,10 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-// Generate random session token
+/*
+ * Sinh token phiên đăng nhập ngẫu nhiên cho user,
+ * dùng để xác thực các request sau khi LOGIN thành công.
+ */
 void generate_session_token(char *token, size_t len)
 {
   static const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -20,7 +23,10 @@ void generate_session_token(char *token, size_t len)
   token[len - 1] = '\0';
 }
 
-//hash password
+/*
+ * Băm mật khẩu bằng SHA-256 và lưu dưới dạng hex string 64 ký tự.
+ * Mọi mật khẩu lưu trong DB đều phải đi qua hàm này.
+ */
 void hash_password(const char *password, char *hashed_output) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256((unsigned char *)password, strlen(password), hash);
@@ -31,6 +37,13 @@ void hash_password(const char *password, char *hashed_output) {
     hashed_output[64] = '\0';
 }
 
+/*
+ * Xử lý đăng ký tài khoản mới:
+ *  - Băm mật khẩu
+ *  - Lưu user vào bảng users
+ *  - Cập nhật cấu trúc in-memory server_data.users
+ * Trả về REGISTER_OK/REGISTER_FAIL cho client.
+ */
 void register_user(int socket_fd, char *username, char *password)
 {
   char response[200];
@@ -76,6 +89,13 @@ void register_user(int socket_fd, char *username, char *password)
   server_send(socket_fd, response);
 }
 
+/*
+ * Xử lý đăng nhập:
+ *  - Kiểm tra username/password (đã băm) trong DB
+ *  - Sinh session token, set trạng thái is_online, socket_fd
+ *  - Lưu role của user (user/admin) để phía client phân quyền
+ *  - Đồng bộ cờ is_online vào DB và log hoạt động.
+ */
 void login_user(int socket_fd, char *username, char *password, int *user_id)
 {
   char query[300];
@@ -188,6 +208,12 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
   server_send(socket_fd, response);
 }
 
+/*
+ * Xử lý đăng xuất:
+ *  - Tắt cờ is_online và xóa session_token trong server_data
+ *  - Đồng bộ trạng thái offline vào DB
+ *  - Hỗ trợ cả trường hợp chỉ biết socket_fd (disconnect khi chưa lưu user_id).
+ */
 void logout_user(int user_id, int socket_fd)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -235,7 +261,12 @@ void logout_user(int user_id, int socket_fd)
   pthread_mutex_unlock(&server_data.lock);
 }
 
-// Change password function
+/*
+ * Đổi mật khẩu:
+ *  - Kiểm tra tham số, độ dài mật khẩu mới
+ *  - Xác thực mật khẩu cũ trong DB
+ *  - Cập nhật mật khẩu mới (đã băm) vào DB và log hoạt động.
+ */
 void change_password(int socket_fd, int user_id, char *old_password, char *new_password)
 {
   char response[256];

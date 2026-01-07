@@ -14,7 +14,156 @@ extern void show_manage_practice_rooms(void);
 static int current_room_id = -1;
 static int current_practice_id = -1;
 
-// ==================== EXAM QUESTION MANAGEMENT ====================
+// Global variable to track selection mode for current room
+static int current_selection_mode = 0;
+
+// Callback for Max button
+static void on_max_clicked(GtkWidget *widget, gpointer data) {
+    GtkSpinButton *spin = GTK_SPIN_BUTTON(data);
+    GtkAdjustment *adj = gtk_spin_button_get_adjustment(spin);
+    double max = gtk_adjustment_get_upper(adj);
+    gtk_spin_button_set_value(spin, max);
+}
+
+// Callback for selection mode toggle
+static void on_selection_mode_toggled(GtkSwitch *switch_widget, gboolean state, gpointer data) {
+    int room_id = GPOINTER_TO_INT(data);
+    int new_mode = state ? 1 : 0;
+    
+    char msg[128];
+    snprintf(msg, sizeof(msg), "SET_ROOM_SELECTION_MODE|%d|%d\n", room_id, new_mode);
+    send_message(msg);
+    
+    char buffer[256];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    if (n > 0 && strncmp(buffer, "SET_SELECTION_MODE_OK", 21) == 0) {
+        current_selection_mode = new_mode;
+        printf("[UI] Selection mode changed to %s\n", new_mode ? "Manual" : "Random");
+        // Refresh the view to update checkbox states
+        show_exam_question_manager(NULL, GINT_TO_POINTER(room_id));
+    } else {
+        show_error_dialog("Failed to change selection mode");
+        // Revert the switch - use blocker to avoid infinite loops
+        g_signal_handlers_block_by_func(switch_widget, on_selection_mode_toggled, data);
+        gtk_switch_set_active(switch_widget, !state);
+        g_signal_handlers_unblock_by_func(switch_widget, on_selection_mode_toggled, data);
+    }
+}
+
+// Callback for question selection checkbox
+static void on_question_selection_toggled(GtkToggleButton *toggle, gpointer data) {
+    // data format: (room_id << 16) | question_id
+    int packed = GPOINTER_TO_INT(data);
+    int room_id = packed >> 16;
+    int question_id = packed & 0xFFFF;
+    
+    int is_selected = gtk_toggle_button_get_active(toggle) ? 1 : 0;
+    
+    char msg[128];
+    snprintf(msg, sizeof(msg), "SET_QUESTION_SELECTED|%d|%d|%d\n", room_id, question_id, is_selected);
+    send_message(msg);
+    
+    char buffer[256];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    if (n <= 0 || strncmp(buffer, "SET_QUESTION_SELECTED_OK", 24) != 0) {
+        show_error_dialog("Failed to update question selection");
+        // Revert the toggle
+        gtk_toggle_button_set_active(toggle, !is_selected);
+    } else {
+        printf("[UI] Question %d selection set to %d\n", question_id, is_selected);
+    }
+}
+
+// Callback for save difficulty button in Random mode
+static void on_save_difficulty_clicked(GtkButton *button, gpointer data) {
+    (void)data;
+    int room_id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "room_id"));
+    GtkWidget *easy_spin = g_object_get_data(G_OBJECT(button), "easy_spin");
+    GtkWidget *medium_spin = g_object_get_data(G_OBJECT(button), "medium_spin");
+    GtkWidget *hard_spin = g_object_get_data(G_OBJECT(button), "hard_spin");
+    
+    int easy_need = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(easy_spin));
+    int medium_need = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(medium_spin));
+    int hard_need = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(hard_spin));
+    
+    int total = easy_need + medium_need + hard_need;
+    if (total <= 0) {
+        show_error_dialog("Please set at least 1 question!");
+        return;
+    }
+    
+    // Get available counts from stored data
+    int easy_avail = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "easy_avail"));
+    int medium_avail = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "medium_avail"));
+    int hard_avail = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "hard_avail"));
+    
+    // Validate each difficulty
+    char error_msg[256];
+    if (easy_need > easy_avail) {
+        snprintf(error_msg, sizeof(error_msg), 
+                 "Not enough Easy questions!\nNeed %d but only have %d available.", easy_need, easy_avail);
+        show_error_dialog(error_msg);
+        return;
+    }
+    if (medium_need > medium_avail) {
+        snprintf(error_msg, sizeof(error_msg), 
+                 "Not enough Medium questions!\nNeed %d but only have %d available.", medium_need, medium_avail);
+        show_error_dialog(error_msg);
+        return;
+    }
+    if (hard_need > hard_avail) {
+        snprintf(error_msg, sizeof(error_msg), 
+                 "Not enough Hard questions!\nNeed %d but only have %d available.", hard_need, hard_avail);
+        show_error_dialog(error_msg);
+        return;
+    }
+    
+    char msg[128];
+    snprintf(msg, sizeof(msg), "UPDATE_ROOM_DIFFICULTY|%d|%d|%d|%d\n", 
+             room_id, easy_need, medium_need, hard_need);
+    send_message(msg);
+    
+    char buffer[256];
+    ssize_t n = receive_message(buffer, sizeof(buffer));
+    
+    if (n > 0 && strncmp(buffer, "UPDATE_DIFFICULTY_OK", 20) == 0) {
+        char success_msg[128];
+        snprintf(success_msg, sizeof(success_msg), 
+                 "Settings saved!\nTotal: %d questions (E:%d M:%d H:%d)", 
+                 total, easy_need, medium_need, hard_need);
+        show_info_dialog(success_msg);
+    } else {
+        show_error_dialog("Failed to save difficulty settings");
+    }
+}
+
+// Callback to update total label when spinner values change
+static void on_difficulty_spin_changed(GtkSpinButton *spin_button, gpointer data) {
+    (void)spin_button;
+    GtkWidget *total_label = (GtkWidget*)data;
+    
+    // Get the spinners from main box (parent of parent)
+    GtkWidget *save_btn = g_object_get_data(G_OBJECT(total_label), "save_btn");
+    if (!save_btn) return;
+    
+    GtkWidget *easy_spin = g_object_get_data(G_OBJECT(save_btn), "easy_spin");
+    GtkWidget *medium_spin = g_object_get_data(G_OBJECT(save_btn), "medium_spin");
+    GtkWidget *hard_spin = g_object_get_data(G_OBJECT(save_btn), "hard_spin");
+    
+    if (!easy_spin || !medium_spin || !hard_spin) return;
+    
+    int easy = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(easy_spin));
+    int medium = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(medium_spin));
+    int hard = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(hard_spin));
+    int total = easy + medium + hard;
+    
+    char total_text[256];
+    snprintf(total_text, sizeof(total_text), 
+             "<span size='12000' weight='bold'>Total Questions: %d</span>", total);
+    gtk_label_set_markup(GTK_LABEL(total_label), total_text);
+}
 
 // Show exam question manager screen
 void show_exam_question_manager(GtkWidget *widget, gpointer data) {
@@ -61,7 +210,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
     send_message(msg);
     
     // Use larger buffer for question lists
-    char *buffer = malloc(BUFFER_SIZE * 16);  // Increased for large datasets
+    char *buffer = malloc(BUFFER_SIZE * 16);
     if (!buffer) {
         show_error_dialog("Memory allocation failed!");
         return;
@@ -70,26 +219,195 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
     // Use complete message receiver to handle TCP fragmentation
     ssize_t n = receive_complete_message(buffer, BUFFER_SIZE * 16, 50);
 
-    // Optional: pretty-print questions line-by-line in console for debugging
-    if (n > 0 && strncmp(buffer, "ROOM_QUESTIONS_LIST", 19) == 0) {
-        printf("===== ROOM_QUESTIONS_LIST (parsed) =====\n");
-        // Work on a copy so we don't break later parsing
-        char *debug_copy = strdup(buffer);
-        if (debug_copy) {
-            char *saveptr;
-            char *tok = strtok_r(debug_copy, "|", &saveptr); // HEADER
-            tok = strtok_r(NULL, "|", &saveptr);             // room_id
-            int idx = 1;
-            while ((tok = strtok_r(NULL, "|", &saveptr)) != NULL) {
-                printf("Q%d: %s\n", idx++, tok);
-            }
-            free(debug_copy);
-        }
-    }
     if (n <= 0) {
         show_error_dialog("Failed to receive question list");
         free(buffer);
         return;
+    }
+
+    // Parse selection_mode and difficulty counts from response
+    // Format: ROOM_QUESTIONS_LIST|room_id|selection_mode|easy_count|medium_count|hard_count|question1|question2|...
+    int selection_mode = 0;
+    int easy_count = 0, medium_count = 0, hard_count = 0;
+    if (strncmp(buffer, "ROOM_QUESTIONS_LIST", 19) == 0) {
+        char *tmp = strdup(buffer);
+        if (tmp) {
+            char *saveptr;
+            strtok_r(tmp, "|", &saveptr); // Skip header
+            strtok_r(NULL, "|", &saveptr); // room_id
+            char *mode_str = strtok_r(NULL, "|", &saveptr);
+            char *easy_str = strtok_r(NULL, "|", &saveptr);
+            char *medium_str = strtok_r(NULL, "|", &saveptr);
+            char *hard_str = strtok_r(NULL, "|", &saveptr);
+            if (mode_str) selection_mode = atoi(mode_str);
+            if (easy_str) easy_count = atoi(easy_str);
+            if (medium_str) medium_count = atoi(medium_str);
+            if (hard_str) hard_count = atoi(hard_str);
+            free(tmp);
+        }
+    }
+    current_selection_mode = selection_mode;
+
+    // Selection mode toggle box
+    GtkWidget *mode_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_margin_top(mode_box, 10);
+    gtk_widget_set_margin_bottom(mode_box, 10);
+    
+    GtkWidget *mode_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(mode_label), "<b>Question Selection Mode:</b>");
+    gtk_box_pack_start(GTK_BOX(mode_box), mode_label, FALSE, FALSE, 0);
+    
+    GtkWidget *random_label = gtk_label_new("Random");
+    gtk_box_pack_start(GTK_BOX(mode_box), random_label, FALSE, FALSE, 5);
+    
+    GtkWidget *mode_switch = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(mode_switch), selection_mode == 1);
+    g_signal_connect(mode_switch, "state-set", G_CALLBACK(on_selection_mode_toggled), GINT_TO_POINTER(room_id));
+    gtk_box_pack_start(GTK_BOX(mode_box), mode_switch, FALSE, FALSE, 5);
+    
+    GtkWidget *manual_label = gtk_label_new("Manual");
+    gtk_box_pack_start(GTK_BOX(mode_box), manual_label, FALSE, FALSE, 0);
+    
+    gtk_box_pack_start(GTK_BOX(vbox), mode_box, FALSE, FALSE, 0);
+
+    // Difficulty settings box (only shown in Random mode)
+    // We need to know available counts first, so calculate them here
+    int easy_avail = 0, medium_avail = 0, hard_avail = 0;
+    if (strncmp(buffer, "ROOM_QUESTIONS_LIST", 19) == 0) {
+        // Quick scan to count questions by difficulty
+        char *count_buffer = strdup(buffer);
+        if (count_buffer) {
+            char *saveptr;
+            char *tok = strtok_r(count_buffer, "|", &saveptr);
+            for (int i = 0; i < 5 && tok; i++) tok = strtok_r(NULL, "|", &saveptr); // Skip header fields
+            while ((tok = strtok_r(NULL, "|", &saveptr)) != NULL) {
+                // Find difficulty field (8th colon-separated field)
+                char *q_copy = strdup(tok);
+                if (q_copy) {
+                    char *sp2;
+                    for (int i = 0; i < 7; i++) strtok_r(i == 0 ? q_copy : NULL, ":", &sp2);
+                    char *diff = strtok_r(NULL, ":", &sp2);
+                    if (diff) {
+                        if (strcasecmp(diff, "easy") == 0) easy_avail++;
+                        else if (strcasecmp(diff, "medium") == 0) medium_avail++;
+                        else if (strcasecmp(diff, "hard") == 0) hard_avail++;
+                    }
+                    free(q_copy);
+                }
+            }
+            free(count_buffer);
+        }
+    }
+    
+    if (selection_mode == 0) {
+        GtkWidget *diff_frame = gtk_frame_new("Random Selection Settings");
+        GtkWidget *diff_main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_widget_set_margin_start(diff_main_box, 15);
+        gtk_widget_set_margin_end(diff_main_box, 15);
+        gtk_widget_set_margin_top(diff_main_box, 10);
+        gtk_widget_set_margin_bottom(diff_main_box, 10);
+        
+        // Row 0: Available questions info
+        char avail_text[256];
+        snprintf(avail_text, sizeof(avail_text), 
+                 "<span size='10000'>Available: <b>%d Easy</b> | <b>%d Medium</b> | <b>%d Hard</b> (Total: %d)</span>",
+                 easy_avail, medium_avail, hard_avail, easy_avail + medium_avail + hard_avail);
+        GtkWidget *avail_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(avail_label), avail_text);
+        gtk_label_set_xalign(GTK_LABEL(avail_label), 0);
+        gtk_box_pack_start(GTK_BOX(diff_main_box), avail_label, FALSE, FALSE, 0);
+        
+        // Row 1: Difficulty spinners
+        GtkWidget *diff_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+        
+        // Easy count
+        GtkWidget *easy_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget *easy_label = gtk_label_new("Easy:");
+        GtkWidget *easy_spin = gtk_spin_button_new_with_range(0, easy_avail, 1);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(easy_spin), easy_count);
+        GtkWidget *easy_max_btn = gtk_button_new_with_label("MAX");
+        style_button(easy_max_btn, "#34495e");
+        gtk_widget_set_size_request(easy_max_btn, 50, -1);
+        g_signal_connect(easy_max_btn, "clicked", G_CALLBACK(on_max_clicked), easy_spin);
+        
+        gtk_box_pack_start(GTK_BOX(easy_box), easy_label, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(easy_box), easy_spin, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(easy_box), easy_max_btn, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(diff_box), easy_box, FALSE, FALSE, 0);
+        
+        // Medium count
+        GtkWidget *medium_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget *medium_label_w = gtk_label_new("Medium:");
+        GtkWidget *medium_spin = gtk_spin_button_new_with_range(0, medium_avail, 1);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(medium_spin), medium_count);
+        GtkWidget *medium_max_btn = gtk_button_new_with_label("MAX");
+        style_button(medium_max_btn, "#34495e");
+        gtk_widget_set_size_request(medium_max_btn, 50, -1);
+        g_signal_connect(medium_max_btn, "clicked", G_CALLBACK(on_max_clicked), medium_spin);
+
+        gtk_box_pack_start(GTK_BOX(medium_box), medium_label_w, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(medium_box), medium_spin, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(medium_box), medium_max_btn, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(diff_box), medium_box, FALSE, FALSE, 0);
+        
+        // Hard count
+        GtkWidget *hard_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget *hard_label = gtk_label_new("Hard:");
+        GtkWidget *hard_spin = gtk_spin_button_new_with_range(0, hard_avail, 1);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(hard_spin), hard_count);
+        GtkWidget *hard_max_btn = gtk_button_new_with_label("MAX");
+        style_button(hard_max_btn, "#34495e");
+        gtk_widget_set_size_request(hard_max_btn, 50, -1);
+        g_signal_connect(hard_max_btn, "clicked", G_CALLBACK(on_max_clicked), hard_spin);
+
+        gtk_box_pack_start(GTK_BOX(hard_box), hard_label, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(hard_box), hard_spin, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(hard_box), hard_max_btn, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(diff_box), hard_box, FALSE, FALSE, 0);
+        
+        gtk_box_pack_start(GTK_BOX(diff_main_box), diff_box, FALSE, FALSE, 0);
+        
+        // Row 2: Total count display
+        int total = easy_count + medium_count + hard_count;
+        char total_text[256];
+        snprintf(total_text, sizeof(total_text), 
+                 "<span size='12000' weight='bold'>Selected Total: %d questions</span>", total);
+        GtkWidget *total_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(total_label), total_text);
+        gtk_label_set_xalign(GTK_LABEL(total_label), 0);
+        gtk_box_pack_start(GTK_BOX(diff_main_box), total_label, FALSE, FALSE, 0);
+        
+        // Save difficulty button
+        GtkWidget *save_diff_btn = gtk_button_new_with_label("Save Settings");
+        style_button(save_diff_btn, "#9b59b6");
+        
+        // Pack data for callback: store widgets and available counts
+        g_object_set_data(G_OBJECT(save_diff_btn), "room_id", GINT_TO_POINTER(room_id));
+        g_object_set_data(G_OBJECT(save_diff_btn), "easy_spin", easy_spin);
+        g_object_set_data(G_OBJECT(save_diff_btn), "medium_spin", medium_spin);
+        g_object_set_data(G_OBJECT(save_diff_btn), "hard_spin", hard_spin);
+        g_object_set_data(G_OBJECT(save_diff_btn), "easy_avail", GINT_TO_POINTER(easy_avail));
+        g_object_set_data(G_OBJECT(save_diff_btn), "medium_avail", GINT_TO_POINTER(medium_avail));
+        g_object_set_data(G_OBJECT(save_diff_btn), "hard_avail", GINT_TO_POINTER(hard_avail));
+        
+        // Store save_btn ref in total_label for spinner callback
+        g_object_set_data(G_OBJECT(total_label), "save_btn", save_diff_btn);
+        
+        // Connect spinner value-changed to update total
+        g_signal_connect(easy_spin, "value-changed", G_CALLBACK(on_difficulty_spin_changed), total_label);
+        g_signal_connect(medium_spin, "value-changed", G_CALLBACK(on_difficulty_spin_changed), total_label);
+        g_signal_connect(hard_spin, "value-changed", G_CALLBACK(on_difficulty_spin_changed), total_label);
+        
+        g_signal_connect(save_diff_btn, "clicked", G_CALLBACK(on_save_difficulty_clicked), NULL);
+        gtk_box_pack_start(GTK_BOX(diff_main_box), save_diff_btn, FALSE, FALSE, 0);
+        
+        gtk_container_add(GTK_CONTAINER(diff_frame), diff_main_box);
+        gtk_box_pack_start(GTK_BOX(vbox), diff_frame, FALSE, FALSE, 5);
+    } else {
+        GtkWidget *info_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(info_label), 
+            "<span foreground='#27ae60' size='small'><i>Manual mode: Use checkboxes below to select questions for the exam.</i></span>");
+        gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 5);
     }
 
     // Scrolled window for questions list
@@ -97,7 +415,7 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                   GTK_POLICY_NEVER,
                                   GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(scroll, -1, 400);
+    gtk_widget_set_size_request(scroll, -1, 300);
 
     GtkWidget *list_box = gtk_list_box_new();
     gtk_container_add(GTK_CONTAINER(scroll), list_box);
@@ -105,7 +423,6 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
 
     // Parse questions
     if (strncmp(buffer, "ROOM_QUESTIONS_LIST", 19) == 0) {
-        // Create a copy for strtok since it modifies the string
         char *buffer_copy = strdup(buffer);
         if (!buffer_copy) {
             free(buffer);
@@ -116,10 +433,14 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
         char *saveptr1;
         char *token = strtok_r(buffer_copy, "|", &saveptr1);
         token = strtok_r(NULL, "|", &saveptr1); // room_id
+        token = strtok_r(NULL, "|", &saveptr1); // selection_mode (already parsed)
+        token = strtok_r(NULL, "|", &saveptr1); // easy_count (already parsed)
+        token = strtok_r(NULL, "|", &saveptr1); // medium_count (already parsed)
+        token = strtok_r(NULL, "|", &saveptr1); // hard_count (already parsed)
         
         int q_count = 0;
         while ((token = strtok_r(NULL, "|", &saveptr1)) != NULL) {
-            // Parse: qid:text:optA:optB:optC:optD:correct:difficulty:category
+            // Parse: qid:text:optA:optB:optC:optD:correct:difficulty:category:is_selected
             char *q_data = strdup(token);
             if (!q_data) continue;
             
@@ -136,12 +457,15 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
             char *correct_str = strtok_r(NULL, ":", &saveptr2);
             char *difficulty = strtok_r(NULL, ":", &saveptr2);
             char *category = strtok_r(NULL, ":", &saveptr2);
+            char *is_selected_str = strtok_r(NULL, ":", &saveptr2);
             
-            // Validate all fields exist
+            // Validate essential fields exist
             if (!text || !optA || !optB || !optC || !optD || !correct_str || !difficulty || !category) {
                 free(q_data);
                 continue;
             }
+            
+            int is_selected = is_selected_str ? atoi(is_selected_str) : 1;
             
             // Create question row
             GtkWidget *row = gtk_list_box_row_new();
@@ -152,22 +476,36 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
             gtk_widget_set_margin_end(hbox, 15);
             gtk_container_add(GTK_CONTAINER(row), hbox);
 
+            // Checkbox for selection (only in manual mode)
+            if (selection_mode == 1) {
+                GtkWidget *select_check = gtk_check_button_new();
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(select_check), is_selected);
+                gtk_widget_set_tooltip_text(select_check, "Include in exam");
+                // Pack room_id and question_id together
+                int packed_data = (room_id << 16) | (qid & 0xFFFF);
+                g_signal_connect(select_check, "toggled", G_CALLBACK(on_question_selection_toggled), 
+                               GINT_TO_POINTER(packed_data));
+                gtk_box_pack_start(GTK_BOX(hbox), select_check, FALSE, FALSE, 0);
+            }
+
             // Question info
             char info_text[1024];
             char correct_letter = 'A' + atoi(correct_str);
+            const char *selected_indicator = is_selected ? "✅" : "❌";
             snprintf(info_text, sizeof(info_text),
-                    "<b>Q%d:</b> %s\n"
+                    "%s <b>Q%d:</b> %s\n"
                     "<span size='small'>A: %s | B: %s | C: %s | D: %s\n"
                     "✔️ Correct: <span foreground='green'><b>%c</b></span> | "
                     "%s | %s</span>",
+                    selection_mode == 0 ? "" : selected_indicator,
                     q_count + 1, text, optA, optB, optC, optD, 
                     correct_letter, difficulty, category);
             
-            GtkWidget *info_label = gtk_label_new(NULL);
-            gtk_label_set_markup(GTK_LABEL(info_label), info_text);
-            gtk_label_set_line_wrap(GTK_LABEL(info_label), TRUE);
-            gtk_label_set_xalign(GTK_LABEL(info_label), 0);
-            gtk_box_pack_start(GTK_BOX(hbox), info_label, TRUE, TRUE, 0);
+            GtkWidget *q_info_label = gtk_label_new(NULL);
+            gtk_label_set_markup(GTK_LABEL(q_info_label), info_text);
+            gtk_label_set_line_wrap(GTK_LABEL(q_info_label), TRUE);
+            gtk_label_set_xalign(GTK_LABEL(q_info_label), 0);
+            gtk_box_pack_start(GTK_BOX(hbox), q_info_label, TRUE, TRUE, 0);
 
             // Edit button
             GtkWidget *edit_btn = gtk_button_new_with_label("Edit");

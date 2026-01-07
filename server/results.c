@@ -52,7 +52,7 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
             // Lấy question_id thực tế từ DB
             char get_qid_query[256];
             snprintf(get_qid_query, sizeof(get_qid_query),
-                     "SELECT id FROM exam_questions WHERE room_id = %d LIMIT 1 OFFSET %d",
+                     "SELECT id FROM exam_questions WHERE room_id = %d AND is_selected = 1 LIMIT 1 OFFSET %d",
                      room_id, q);
             
             sqlite3_stmt *stmt;
@@ -113,7 +113,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm question index (question_id → index trong mảng)
     char get_q_index[256];
     snprintf(get_q_index, sizeof(get_q_index),
-             "SELECT COUNT(*) - 1 FROM exam_questions WHERE room_id = %d AND id <= %d",
+             "SELECT COUNT(*) - 1 FROM exam_questions WHERE room_id = %d AND is_selected = 1 AND id <= %d",
              room_id, question_id);
     
     sqlite3_stmt *stmt;
@@ -273,8 +273,8 @@ void submit_test(int socket_fd, int user_id, int room_id)
   
   // Đếm tổng số câu hỏi
   char count_query[256];
-  snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", room_id);
+    snprintf(count_query, sizeof(count_query),
+                     "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room_id);
   
   int total_questions = 0;
   if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
@@ -416,8 +416,8 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   
   // Đếm tổng câu hỏi
   char count_query[256];
-  snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", room_id);
+    snprintf(count_query, sizeof(count_query),
+                     "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room_id);
   
   int total_questions = 0;
   if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {

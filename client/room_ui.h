@@ -2,9 +2,11 @@
 #define ROOM_UI_H
 
 #include "include/client_common.h"
+#include <gtk/gtk.h>
 
 // Room screens
 void create_test_mode_screen(void);
+void create_exam_room_with_questions(GtkWidget *widget, gpointer user_data);
 
 // Room operations
 void load_rooms_list(void);

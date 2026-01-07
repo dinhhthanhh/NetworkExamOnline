@@ -58,6 +58,7 @@ void init_database() {
                             "correct_answer INTEGER NOT NULL,"  // 0=A, 1=B, 2=C, 3=D
                             "difficulty TEXT DEFAULT 'Easy',"
                             "category TEXT DEFAULT 'General',"
+                            "is_selected INTEGER DEFAULT 1,"  // 1 = dùng trong đề, 0 = không dùng
                             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                             "FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE CASCADE"
                             ");";
@@ -104,6 +105,9 @@ void init_database() {
                             "is_active INTEGER DEFAULT 1,"  // 1: đang mở, 0: đã đóng (deprecated)
                             "room_status INTEGER DEFAULT 0,"  // 0=WAITING, 1=STARTED, 2=ENDED
                             "exam_start_time INTEGER DEFAULT 0,"  // Unix timestamp khi host start
+                            "easy_count INTEGER DEFAULT 0,"  // Số câu Easy được cấu hình
+                            "medium_count INTEGER DEFAULT 0,"  // Số câu Medium được cấu hình
+                            "hard_count INTEGER DEFAULT 0,"  // Số câu Hard được cấu hình
                             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                             "FOREIGN KEY(host_id) REFERENCES users(id) ON DELETE CASCADE"
                             ");";
@@ -164,6 +168,49 @@ void init_database() {
   const char *sql_alter_exam_start = 
     "ALTER TABLE rooms ADD COLUMN exam_start_time INTEGER DEFAULT 0;";
   sqlite3_exec(db, sql_alter_exam_start, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm các cột cấu hình số câu hỏi theo độ khó nếu chưa có
+  const char *sql_alter_easy_count =
+    "ALTER TABLE rooms ADD COLUMN easy_count INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_easy_count, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  const char *sql_alter_medium_count =
+    "ALTER TABLE rooms ADD COLUMN medium_count INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_medium_count, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  const char *sql_alter_hard_count =
+    "ALTER TABLE rooms ADD COLUMN hard_count INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_hard_count, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột selection_mode vào rooms (0=random, 1=manual)
+  const char *sql_alter_selection_mode =
+    "ALTER TABLE rooms ADD COLUMN selection_mode INTEGER DEFAULT 0;";
+  sqlite3_exec(db, sql_alter_selection_mode, 0, 0, &err_msg);
+  if (err_msg) {
+    sqlite3_free(err_msg);
+    err_msg = NULL;
+  }
+
+  // Thêm cột is_selected vào exam_questions nếu chưa có
+  const char *sql_alter_exam_is_selected =
+    "ALTER TABLE exam_questions ADD COLUMN is_selected INTEGER DEFAULT 1;";
+  sqlite3_exec(db, sql_alter_exam_is_selected, 0, 0, &err_msg);
   if (err_msg) {
     sqlite3_free(err_msg);
     err_msg = NULL;

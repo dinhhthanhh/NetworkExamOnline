@@ -573,7 +573,7 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     
     // Đếm số câu hỏi
     total_questions = 0;
-    while (strtok(NULL, "|") != NULL) {
+    while (strtok(NULL, "|\n") != NULL) {
         total_questions++;
     }
     
@@ -608,7 +608,7 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     
     int q_idx = 0;
     char *q_token;
-    while ((q_token = strtok(NULL, "|")) != NULL && q_idx < total_questions) {
+    while ((q_token = strtok(NULL, "|\n")) != NULL && q_idx < total_questions) {
         // Parse: q_id:text:optA:optB:optC:optD:difficulty
         char *q_ptr = q_token;
         
@@ -791,8 +791,9 @@ void show_exam_question_screen(void) {
     
     // Question text with difficulty
     char q_text[700];
-    const char *diff_color = strcmp(current_q->difficulty, "Easy") == 0 ? "#27ae60" :
-                            strcmp(current_q->difficulty, "Hard") == 0 ? "#e74c3c" : "#f39c12";
+    // Use strcasecmp for case-insensitive comparison
+    const char *diff_color = strcasecmp(current_q->difficulty, "Easy") == 0 ? "#27ae60" :
+                            strcasecmp(current_q->difficulty, "Hard") == 0 ? "#e74c3c" : "#f39c12";
     snprintf(q_text, sizeof(q_text),
             "<span foreground='#2c3e50' weight='bold' size='12000'>Q%d. %s</span>\n"
             "<span foreground='%s' size='10000'><i>Difficulty: %s</i></span>",
@@ -963,7 +964,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     
     // Count questions
     total_questions = 0;
-    while (strtok(NULL, "|") != NULL) {
+    while (strtok(NULL, "|\n") != NULL) {
         total_questions++;
     }
     
@@ -995,7 +996,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     
     int q_idx = 0;
     char *q_token;
-    while ((q_token = strtok(NULL, "|")) != NULL && q_idx < total_questions) {
+    while ((q_token = strtok(NULL, "|\n")) != NULL && q_idx < total_questions) {
         // Parse: q_id:text:optA:optB:optC:optD[:difficulty]:saved_answer
         char *q_ptr = q_token;
         

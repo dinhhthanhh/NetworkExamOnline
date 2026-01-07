@@ -57,7 +57,7 @@ void check_room_timeouts(void)
       else if (room->room_status == 1)
       {
         // Time's up - auto-submit CHỈ users đang ONLINE
-        room->room_status = 0; // Reset về WAITING để có thể mở lại kỳ thi
+        room->room_status = 2; // Set status TO ENDED
 
         // Query danh sách participants từ DB để lấy users đã bắt đầu thi
         char participant_query[512];

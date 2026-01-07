@@ -520,6 +520,15 @@ void create_stats_screen()
             GtkWidget *empty_label = gtk_label_new("No test history yet. Take your first test!");
             gtk_box_pack_start(GTK_BOX(history_box), empty_label, FALSE, FALSE, 20);
         }
+        
+        // Reverse history_percentages array so oldest exam is first (near Y-axis)
+        // The data comes from server sorted by completed_at DESC (newest first)
+        // We need to reverse it so first exam (oldest) is at index 0 (near Y-axis)
+        for (int i = 0; i < history_count / 2; i++) {
+            double temp = history_percentages[i];
+            history_percentages[i] = history_percentages[history_count - 1 - i];
+            history_percentages[history_count - 1 - i] = temp;
+        }
     } else {
         GtkWidget *error_label = gtk_label_new("Failed to load test history");
         gtk_box_pack_start(GTK_BOX(history_box), error_label, FALSE, FALSE, 20);

@@ -21,6 +21,9 @@ void get_room_members(int socket_fd, int user_id, int room_id);
 void close_room(int socket_fd, int user_id, int room_id);
 void load_rooms_from_db(void);
 void load_room_answers(int room_id, int user_id);
+void set_question_selected(int socket_fd, int user_id, int room_id, int question_id, int is_selected);
+void set_room_selection_mode(int socket_fd, int user_id, int room_id, int selection_mode);
+void update_room_difficulty(int socket_fd, int user_id, int room_id, int easy_count, int medium_count, int hard_count);
 
 #endif
 

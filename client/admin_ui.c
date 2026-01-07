@@ -1,5 +1,5 @@
 #include "admin_ui.h"
-#include "exam_room_creator.h"
+#include "room_ui.h"
 #include "ui_utils.h"
 #include "ui.h"
 #include "net.h"
@@ -615,7 +615,7 @@ void create_admin_panel()
                     gtk_widget_set_size_request(status_btn, 120, 40);
                     gtk_widget_set_sensitive(status_btn, FALSE);
                     gtk_box_pack_start(GTK_BOX(btn_box), status_btn, FALSE, FALSE, 0);
-                } else if (strcmp(status, "Closed") == 0 || strcmp(status, "Waiting") == 0) {
+                } else if (strcmp(status, "Closed") == 0 || strcmp(status, "Waiting") == 0 || strcmp(status, "Ended") == 0) {
                     // Room đang Closed/Waiting - hiển thị button OPEN
                     GtkWidget *open_btn = gtk_button_new_with_label("OPEN");
                     style_button(open_btn, "#27ae60");
@@ -653,11 +653,11 @@ void create_admin_panel()
                                GINT_TO_POINTER(room_id));
                 gtk_box_pack_start(GTK_BOX(btn_box), results_btn, FALSE, FALSE, 0);
                 
-                // Delete chỉ cho phép khi phòng đã hết thời gian thi (status Ended)
+                // Delete chỉ cho phép khi phòng chưa bắt đầu (Waiting) hoặc đã kết thúc (Ended)
                 GtkWidget *delete_btn = gtk_button_new_with_label("DELETE");
                 style_button(delete_btn, "#c0392b");
                 gtk_widget_set_size_request(delete_btn, 120, 40);
-                if (strcmp(status, "Ended") == 0) {
+                if (strcmp(status, "Ended") == 0 || strcmp(status, "Waiting") == 0) {
                     g_signal_connect(delete_btn, "clicked", 
                                      G_CALLBACK(on_delete_room_clicked), 
                                      GINT_TO_POINTER(room_id));

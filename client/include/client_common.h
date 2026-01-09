@@ -6,7 +6,7 @@
 #define SERVER_IP "127.0.0.1"
 // #define SERVER_IP "192.168.1.3"
 #define SERVER_PORT 8888
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 8192
 
 typedef struct {
     int socket_fd;

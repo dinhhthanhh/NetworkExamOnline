@@ -1053,9 +1053,31 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         return;
     }
     
+    // Count questions first for dynamic allocation
+    char count_query[256];
+    snprintf(count_query, sizeof(count_query),
+             "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room_id);
+    int question_total = 0;
+    sqlite3_stmt *count_stmt;
+    if (sqlite3_prepare_v2(db, count_query, -1, &count_stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+            question_total = sqlite3_column_int(count_stmt, 0);
+        }
+        sqlite3_finalize(count_stmt);
+    }
+    
+    // Dynamic allocation: 1KB per question
+    size_t buf_size = (size_t)question_total * 1024 + 4096;
+    char *response = malloc(buf_size);
+    if (!response) {
+        sqlite3_finalize(stmt);
+        send(socket_fd, "ERROR|Memory allocation error\n", 30, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
     // Format: BEGIN_EXAM_OK|remaining_seconds|q1_id:q1_text:optA:optB:optC:optD:difficulty|q2_id:...
-    char response[8192];
-    snprintf(response, sizeof(response), "BEGIN_EXAM_OK|%ld", remaining);
+    int offset = snprintf(response, buf_size, "BEGIN_EXAM_OK|%ld", remaining);
     
     int question_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -1085,16 +1107,15 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
             }
         }
         
-        char q_entry[1024];
-        snprintf(q_entry, sizeof(q_entry), "|%d:%s:%s:%s:%s:%s:%s",
+        offset += snprintf(response + offset, buf_size - offset, "|%d:%s:%s:%s:%s:%s:%s",
                  q_id, q_text, opt_a, opt_b, opt_c, opt_d, normalized_diff);
-        strcat(response, q_entry);
         question_count++;
     }
     
     sqlite3_finalize(stmt);
     
     if (question_count == 0) {
+        free(response);
         send(socket_fd, "ERROR|No questions in room\n", 27, 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -1102,6 +1123,7 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
+    free(response);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -1228,9 +1250,31 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
         return;
     }
     
+    // Count questions for dynamic allocation
+    char count_query[256];
+    snprintf(count_query, sizeof(count_query),
+             "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room_id);
+    int question_total = 0;
+    sqlite3_stmt *count_stmt;
+    if (sqlite3_prepare_v2(db, count_query, -1, &count_stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+            question_total = sqlite3_column_int(count_stmt, 0);
+        }
+        sqlite3_finalize(count_stmt);
+    }
+    
+    // Dynamic allocation: 1KB per question
+    size_t buf_size = (size_t)question_total * 1024 + 4096;
+    char *response = malloc(buf_size);
+    if (!response) {
+        sqlite3_finalize(stmt);
+        send(socket_fd, "ERROR|Memory allocation error\n", 30, 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
     // Format: RESUME_EXAM_OK|remaining_seconds|q1_id:q1_text:optA:optB:optC:optD:difficulty:saved_answer|...
-    char response[8192];
-    snprintf(response, sizeof(response), "RESUME_EXAM_OK|%ld", remaining);
+    int offset = snprintf(response, buf_size, "RESUME_EXAM_OK|%ld", remaining);
     
     int question_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -1265,10 +1309,8 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
             saved_answer = sqlite3_column_int(stmt, 7);
         }
         
-        char q_entry[1024];
-        snprintf(q_entry, sizeof(q_entry), "|%d:%s:%s:%s:%s:%s:%s:%d",
+        offset += snprintf(response + offset, buf_size - offset, "|%d:%s:%s:%s:%s:%s:%s:%d",
                  q_id, q_text, opt_a, opt_b, opt_c, opt_d, normalized_diff, saved_answer);
-        strcat(response, q_entry);
         question_count++;
     }
     
@@ -1276,6 +1318,7 @@ void handle_resume_exam(int socket_fd, int user_id, int room_id)
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
+    free(response);
     
     pthread_mutex_unlock(&server_data.lock);
 }

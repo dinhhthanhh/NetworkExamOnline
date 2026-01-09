@@ -10,7 +10,7 @@
 
 #define PORT 8888
 #define MAX_CLIENTS 100
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 8192
 #define MAX_ROOMS 50
 #define MAX_QUESTIONS 1000
 #define MAX_ANSWERS 4

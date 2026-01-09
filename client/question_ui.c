@@ -489,11 +489,11 @@ void show_exam_question_manager(GtkWidget *widget, gpointer data) {
             // Question info
             char info_text[1024];
             char correct_letter = 'A' + atoi(correct_str);
-            const char *selected_indicator = is_selected ? "✅" : "❌";
+            const char *selected_indicator = is_selected ? "✓" : "✗";
             snprintf(info_text, sizeof(info_text),
                     "%s <b>Q%d:</b> %s\n"
                     "<span size='small'>A: %s | B: %s | C: %s | D: %s\n"
-                    "✔️ Correct: <span foreground='green'><b>%c</b></span> | "
+                    "Correct: <span foreground='green'><b>%c</b></span> | "
                     "%s | %s</span>",
                     selection_mode == 0 ? "" : selected_indicator,
                     q_count + 1, text, optA, optB, optC, optD, 

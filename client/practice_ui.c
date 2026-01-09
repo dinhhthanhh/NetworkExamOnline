@@ -139,8 +139,12 @@ void show_practice_list_screen(void) {
     // Send request to server
     send_message("LIST_PRACTICE\n");
     
-    char recv_buf[BUFFER_SIZE * 2];
-    ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
+    char *recv_buf = malloc(BUFFER_SIZE * 128);  // 1MB for large question lists
+    if (!recv_buf) {
+        show_error_dialog("Memory allocation error");
+        return;
+    }
+    ssize_t n = receive_complete_message(recv_buf, BUFFER_SIZE * 128, 100);
     
     if (n <= 0) {
         show_error_dialog("Failed to load practice rooms");
@@ -155,6 +159,7 @@ void show_practice_list_screen(void) {
     
     char *room_data = recv_buf + 20;
     parse_practice_rooms(room_data);
+    free(recv_buf);
     
     // Create UI
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
@@ -321,10 +326,15 @@ void on_join_practice(GtkWidget *widget, gpointer data) {
     snprintf(msg, sizeof(msg), "JOIN_PRACTICE|%d\n", practice_id);
     send_message(msg);
     
-    char recv_buf[BUFFER_SIZE * 2];
-    ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
+    char *recv_buf = malloc(BUFFER_SIZE * 128);  // 1MB for large question lists
+    if (!recv_buf) {
+        show_error_dialog("Memory allocation error");
+        return;
+    }
+    ssize_t n = receive_complete_message(recv_buf, BUFFER_SIZE * 128, 100);
     
     if (n <= 0) {
+        free(recv_buf);
         show_error_dialog("Failed to join practice room");
         return;
     }
@@ -332,11 +342,13 @@ void on_join_practice(GtkWidget *widget, gpointer data) {
     if (strncmp(recv_buf, "JOIN_PRACTICE_FAIL|", 19) == 0) {
         char *error_msg = recv_buf + 19;
         show_error_dialog(error_msg);
+        free(recv_buf);
         return;
     }
     
     if (strncmp(recv_buf, "JOIN_PRACTICE_OK|", 17) != 0) {
         show_error_dialog("Invalid server response");
+        free(recv_buf);
         return;
     }
     
@@ -433,6 +445,8 @@ void on_join_practice(GtkWidget *widget, gpointer data) {
 
     // Adjust actual question count to what we successfully parsed
     current_practice.num_questions = q_idx;
+    
+    free(recv_buf);
 
     current_practice.current_question = 0;
     current_practice.start_time = time(NULL);
@@ -1153,7 +1167,7 @@ void show_manage_practice_rooms(void) {
     
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title),
-        "<span foreground='#2c3e50' weight='bold' size='18000'>📋 MANAGE PRACTICE ROOMS</span>");
+        "<span foreground='#2c3e50' weight='bold' size='18000'>MANAGE PRACTICE ROOMS</span>");
     gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
     
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -1162,7 +1176,7 @@ void show_manage_practice_rooms(void) {
     // Action buttons at top
     GtkWidget *top_button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     
-    GtkWidget *create_btn = gtk_button_new_with_label("➕ CREATE ROOM");
+    GtkWidget *create_btn = gtk_button_new_with_label("CREATE ROOM");
     style_button(create_btn, "#27ae60");
     g_signal_connect(create_btn, "clicked", G_CALLBACK(on_create_practice_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(top_button_box), create_btn, TRUE, TRUE, 0);
@@ -1193,7 +1207,7 @@ void show_manage_practice_rooms(void) {
         snprintf(room_info, sizeof(room_info),
                 "<b>%s</b> | Status: %s | Questions: %d | Active: %d",
                 room->room_name,
-                room->is_open ? "🟢 OPEN" : "🔴 CLOSED",
+                room->is_open ? "OPEN" : "CLOSED",
                 room->num_questions,
                 room->active_participants);
         
@@ -1394,16 +1408,23 @@ void on_view_practice_results(GtkWidget *widget, gpointer data) {
     snprintf(msg, sizeof(msg), "VIEW_PRACTICE_RESULTS|%d\n", practice_id);
     send_message(msg);
 
-    char recv_buf[BUFFER_SIZE * 2];
-    ssize_t n = receive_message(recv_buf, sizeof(recv_buf));
+    // Dynamic allocation for large question lists
+    char *recv_buf = malloc(BUFFER_SIZE * 128);
+    if (!recv_buf) {
+        show_error_dialog("Memory allocation error");
+        return;
+    }
+    ssize_t n = receive_complete_message(recv_buf, BUFFER_SIZE * 128, 100);
     
     if (n > 0 && strncmp(recv_buf, "PRACTICE_RESULTS_FAIL|", 21) == 0) {
         show_error_dialog(recv_buf + 21);
+        free(recv_buf);
         return;
     }
 
     if (n <= 0 || strncmp(recv_buf, "PRACTICE_RESULTS|", 17) != 0) {
         show_error_dialog("Failed to load practice results");
+        free(recv_buf);
         return;
     }
 
@@ -1483,6 +1504,8 @@ void on_view_practice_results(GtkWidget *widget, gpointer data) {
 
     // Ensure num_questions does not exceed what we actually parsed
     current_practice.num_questions = q_index;
+    
+    free(recv_buf);
 
     // Show unified practice-style results view
     practice_in_results_view = 1;

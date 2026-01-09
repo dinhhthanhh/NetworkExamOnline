@@ -485,8 +485,17 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
             // Resume existing session
             PracticeSession *session = &server_data.practice_sessions[i];
             
-            char response[BUFFER_SIZE];
-            int offset = snprintf(response, sizeof(response), 
+            // Dynamic allocation: 1KB per question for safety
+            size_t buf_size = (size_t)room->num_questions * 1024 + 4096;
+            char *response = malloc(buf_size);
+            if (!response) {
+                char err[] = "JOIN_PRACTICE_FAIL|Memory allocation error\n";
+                send(socket_fd, err, strlen(err), 0);
+                pthread_mutex_unlock(&server_data.lock);
+                return;
+            }
+            
+            int offset = snprintf(response, buf_size, 
                                  "JOIN_PRACTICE_OK|%d|%s|%d|%d|%d|%d|",
                                  practice_id, room->room_name, room->time_limit, 
                                  room->show_answers, room->num_questions, session->session_id);
@@ -509,7 +518,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
                         const char *opt_d = (const char *)sqlite3_column_text(q_stmt, 4);
                         const char *difficulty = (const char *)sqlite3_column_text(q_stmt, 5);
 
-                        offset += snprintf(response + offset, sizeof(response) - offset,
+                        offset += snprintf(response + offset, buf_size - offset,
                                           "%d~%s~%s~%s~%s~%s~%s~%d",
                                           qid,
                                           q_text ? q_text : "",
@@ -521,7 +530,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
                                           session->answers[j]);
 
                         if (j < room->num_questions - 1) {
-                            offset += snprintf(response + offset, sizeof(response) - offset, "|");
+                            offset += snprintf(response + offset, buf_size - offset, "|");
                         }
                     }
                     sqlite3_finalize(q_stmt);
@@ -530,6 +539,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
             
             strcat(response, "\n");
             send(socket_fd, response, strlen(response), 0);
+            free(response);
             pthread_mutex_unlock(&server_data.lock);
             return;
         }
@@ -618,9 +628,17 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
         server_data.practice_session_count++;
     }
     
-    // Send practice room data with questions
-    char response[BUFFER_SIZE];
-    int offset = snprintf(response, sizeof(response), 
+    // Send practice room data with questions - dynamic allocation
+    size_t buf_size = (size_t)room->num_questions * 1024 + 4096;
+    char *response = malloc(buf_size);
+    if (!response) {
+        char err[] = "JOIN_PRACTICE_FAIL|Memory allocation error\n";
+        send(socket_fd, err, strlen(err), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    int offset = snprintf(response, buf_size, 
                          "JOIN_PRACTICE_OK|%d|%s|%d|%d|%d|%d|",
                          practice_id, room->room_name, room->time_limit, 
                          room->show_answers, room->num_questions, session_id);
@@ -643,7 +661,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
                 const char *opt_d = (const char *)sqlite3_column_text(q_stmt, 4);
                 const char *difficulty = (const char *)sqlite3_column_text(q_stmt, 5);
 
-                offset += snprintf(response + offset, sizeof(response) - offset,
+                offset += snprintf(response + offset, buf_size - offset,
                                   "%d~%s~%s~%s~%s~%s~%s~-1",
                                   qid,
                                   q_text ? q_text : "",
@@ -654,7 +672,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
                                   difficulty ? difficulty : "");
 
                 if (i < room->num_questions - 1) {
-                    offset += snprintf(response + offset, sizeof(response) - offset, "|");
+                    offset += snprintf(response + offset, buf_size - offset, "|");
                 }
             }
             sqlite3_finalize(q_stmt);
@@ -663,7 +681,7 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
-    
+    free(response);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -876,9 +894,17 @@ void view_practice_results(int socket_fd, int user_id, int practice_id) {
         return;
     }
     
-    // Build response with all questions and answers
-    char response[BUFFER_SIZE];
-    int offset = snprintf(response, sizeof(response), 
+    // Build response with all questions and answers - dynamic allocation
+    size_t buf_size = (size_t)room->num_questions * 1024 + 4096;
+    char *response = malloc(buf_size);
+    if (!response) {
+        char err[] = "PRACTICE_RESULTS_FAIL|Memory allocation error\n";
+        send(socket_fd, err, strlen(err), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
+    int offset = snprintf(response, buf_size, 
                          "PRACTICE_RESULTS|%d|%d|%d|",
                          practice_id, session->score, session->total_questions);
     
@@ -901,7 +927,7 @@ void view_practice_results(int socket_fd, int user_id, int practice_id) {
                 const char *opt_d = (const char *)sqlite3_column_text(stmt_q, 4);
                 int correct_answer = sqlite3_column_int(stmt_q, 5);
 
-                offset += snprintf(response + offset, sizeof(response) - offset,
+                offset += snprintf(response + offset, buf_size - offset,
                                   "%d~%s~%s~%s~%s~%s~%d~%d~%d",
                                   qid,
                                   q_text ? q_text : "",
@@ -914,7 +940,7 @@ void view_practice_results(int socket_fd, int user_id, int practice_id) {
                                   session->is_correct[i]);
 
                 if (i < room->num_questions - 1) {
-                    offset += snprintf(response + offset, sizeof(response) - offset, "|");
+                    offset += snprintf(response + offset, buf_size - offset, "|");
                 }
             }
             sqlite3_finalize(stmt_q);
@@ -923,6 +949,7 @@ void view_practice_results(int socket_fd, int user_id, int practice_id) {
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
+    free(response);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -1571,12 +1598,19 @@ void import_practice_csv(int socket_fd, int user_id, int practice_id, const char
     char line[2048];
     int imported = 0;
     int line_num = 0;
+    int header_skipped = 0;
     
     while (fgets(line, sizeof(line), fp)) {
         line_num++;
         
         // Skip empty lines and comments
         if (line[0] == '\n' || line[0] == '#' || line[0] == '\r') continue;
+        
+        // Skip header row (first non-empty, non-comment line)
+        if (!header_skipped) {
+            header_skipped = 1;
+            continue;
+        }
         
         // Remove newline
         line[strcspn(line, "\r\n")] = 0;

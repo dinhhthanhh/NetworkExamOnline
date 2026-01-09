@@ -15,6 +15,17 @@ static int connect_to_server();
 static void show_connection_error_dialog();
 
 int main(int argc, char *argv[]) {
+    // Redirect stdout and stderr to client.log
+    if (freopen("client.log", "a", stdout) == NULL) {
+        perror("Failed to redirect stdout to client.log");
+    }
+    if (freopen("client.log", "a", stderr) == NULL) {
+        perror("Failed to redirect stderr to client.log");
+    }
+    // Set line buffering for stdout and no buffering for stderr
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     gtk_init(&argc, &argv);
 
     if (connect_to_server() < 0) {

@@ -46,11 +46,9 @@ void show_exam_question_screen(void);
 
 // Callback when ROOM_STARTED broadcast received
 static void on_room_started_broadcast(int room_id, long start_time) {
-    printf("[EXAM_UI] Received ROOM_STARTED for room %d\n", room_id);
     
     // Check if we're waiting for this room
     if (waiting_room_id == room_id && waiting_dialog != NULL) {
-        printf("[EXAM_UI] Closing waiting dialog and starting exam\n");
         
         // Close waiting dialog
         gtk_dialog_response(GTK_DIALOG(waiting_dialog), GTK_RESPONSE_ACCEPT);
@@ -65,7 +63,6 @@ static void on_room_started_broadcast(int room_id, long start_time) {
 
 // Callback when ROOM_DELETED broadcast received
 static void on_room_deleted_broadcast(int room_id) {
-    printf("[EXAM_UI] Received ROOM_DELETED for room %d\n", room_id);
     
     // Check if we're currently in this room
     if (exam_room_id == room_id) {
@@ -159,12 +156,10 @@ static gboolean update_exam_timer(gpointer data) {
         // CRITICAL: Stop broadcast listener before submitting
         if (broadcast_is_listening()) {
             broadcast_stop_listener();
-            printf("[EXAM_UI] Stopped broadcast listener before auto-submit\n");
         }
 
         // If connection is already lost, abort auto-submit gracefully
         if (client.socket_fd <= 0 || !check_connection()) {
-            printf("[EXAM_UI] Connection lost before auto-submit; skipping SUBMIT_TEST\n");
             cleanup_exam_ui();
 
             GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -186,14 +181,15 @@ static gboolean update_exam_timer(gpointer data) {
             int flags = fcntl(client.socket_fd, F_GETFL, 0);
             if (flags >= 0) {
                 fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-                printf("[EXAM_UI] Socket set to blocking mode for auto-submit\n");
             }
         }
 
         // Lưu room_id trước khi cleanup
         int submit_room_id = exam_room_id;
 
-        printf("[DEBUG] Timeout - Auto-submitting exam for room: %d\n", submit_room_id);
+
+        // CRITICAL: Flush socket buffer before submit to clear stale responses
+        flush_socket_buffer(client.socket_fd);
 
         // Gửi SUBMIT_TEST
         char msg[64];
@@ -301,9 +297,7 @@ void on_answer_selected(GtkWidget *widget, gpointer data) {
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
     if (n > 0 && strncmp(buffer, "SAVE_ANSWER_OK", 14) == 0) {
-        printf("[DEBUG] Saved answer Q%d = %d (confirmed)\n", question_id, selected);
     } else {
-        printf("[DEBUG] Save answer warning: %s\n", buffer);
     }
     
     // Refresh screen to update navigation colors
@@ -321,7 +315,6 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
     // CRITICAL: Stop broadcast listener before submitting to ensure blocking socket
     if (broadcast_is_listening()) {
         broadcast_stop_listener();
-        printf("[EXAM_UI] Stopped broadcast listener before submit\n");
     }
     
     // Lưu room_id trước khi cleanup (vì cleanup sẽ reset về 0)
@@ -369,16 +362,17 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
         }
     }
     
-    printf("[DEBUG] Submitting exam for room: %d\n", submit_room_id);
     
     // CRITICAL: Ensure socket is in blocking mode before submit
     if (client.socket_fd > 0) {
         int flags = fcntl(client.socket_fd, F_GETFL, 0);
         if (flags >= 0) {
             fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-            printf("[EXAM_UI] Socket set to blocking mode for submit\n");
         }
     }
+    
+    // CRITICAL: Flush socket buffer before submit to clear stale responses
+    flush_socket_buffer(client.socket_fd);
     
     // Gửi SUBMIT_TEST
     char msg[64];
@@ -419,7 +413,6 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
             int flags = fcntl(client.socket_fd, F_GETFL, 0);
             if (flags >= 0) {
                 fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-                printf("[EXAM_UI] Restored blocking mode after submit\n");
             }
         }
         
@@ -444,7 +437,6 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
             int flags = fcntl(client.socket_fd, F_GETFL, 0);
             if (flags >= 0) {
                 fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-                printf("[EXAM_UI] Restored blocking mode after submit failure\n");
             }
         }
         
@@ -457,6 +449,9 @@ void on_submit_exam_clicked(GtkWidget *widget, gpointer data) {
 void create_exam_page(int room_id) {
     exam_room_id = room_id;
     
+    // Flush socket buffer before BEGIN_EXAM to clear stale data
+    flush_socket_buffer(client.socket_fd);
+    
     // Gửi BEGIN_EXAM để load questions
     char msg[64];
     snprintf(msg, sizeof(msg), "BEGIN_EXAM|%d\n", room_id);
@@ -465,11 +460,9 @@ void create_exam_page(int room_id) {
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
     
-    printf("[DEBUG] BEGIN_EXAM response (%zd bytes): %s\n", n, buffer);
     
     // ===== XỬ LÝ EXAM_WAITING (LOGIC MỚI) =====
     if (n > 0 && strncmp(buffer, "EXAM_WAITING", 12) == 0) {
-        printf("[EXAM_UI] Entering waiting mode for room %d\n", room_id);
         
         waiting_room_id = room_id;
         
@@ -497,7 +490,6 @@ void create_exam_page(int room_id) {
             // User cancelled - stop listening
             broadcast_stop_listener();
             waiting_room_id = 0;
-            printf("[EXAM_UI] User cancelled waiting\n");
         }
         
         return;
@@ -539,7 +531,6 @@ static void start_exam_ui(int room_id) {
     char buffer[BUFFER_SIZE];
     ssize_t n = receive_message(buffer, sizeof(buffer));
     
-    printf("[DEBUG] BEGIN_EXAM response after broadcast (%zd bytes): %s\n", n, buffer);
     
     if (n <= 0 || strncmp(buffer, "BEGIN_EXAM_OK", 13) != 0) {
         GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -569,7 +560,6 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
     exam_duration = (remaining_seconds + 59) / 60; // Convert về phút (làm tròn lên)
     exam_start_time = time(NULL) - (exam_duration * 60 - remaining_seconds); // Điều chỉnh start_time
     
-    printf("[DEBUG] Remaining: %d seconds (~ %d minutes)\n", remaining_seconds, exam_duration);
     
     // Đếm số câu hỏi
     total_questions = 0;
@@ -577,7 +567,6 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
         total_questions++;
     }
     
-    printf("[DEBUG] Total questions: %d\n", total_questions);
     
     if (total_questions == 0) {
         GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -640,14 +629,12 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
             strcpy(questions[q_idx].difficulty, "Medium");
         }
         
-        printf("[DEBUG] Q%d: %s [%s]\n", questions[q_idx].question_id, questions[q_idx].text, questions[q_idx].difficulty);
         q_idx++;
     }
     
     total_questions = q_idx; // Update với số câu thực tế parse được
     free(original_buffer);
     
-    printf("[DEBUG] Successfully parsed %d questions\n", total_questions);
     
     if (total_questions == 0) {
         GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
@@ -668,7 +655,6 @@ static void start_exam_ui_from_response(int room_id, char *buffer) {
         broadcast_start_listener();
     }
     
-    printf("[DEBUG] Creating UI with %d questions...\n", total_questions);
     
     // Initialize current question index
     current_question_index = 0;
@@ -894,7 +880,6 @@ void cleanup_exam_ui() {
     // CRITICAL: Stop broadcast listener first to prevent callbacks on destroyed widgets
     if (broadcast_is_listening()) {
         broadcast_stop_listener();
-        printf("[EXAM_UI] Stopped broadcast listener during cleanup\n");
     }
     
     if (timer_id > 0) {
@@ -929,7 +914,6 @@ void cleanup_exam_ui() {
         int flags = fcntl(client.socket_fd, F_GETFL, 0);
         if (flags >= 0) {
             fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-            printf("[EXAM_UI] Restored socket to blocking mode\n");
         }
     }
     
@@ -944,7 +928,6 @@ void cleanup_exam_ui() {
 void create_exam_page_from_resume(int room_id, char *resume_data) {
     exam_room_id = room_id;
     
-    printf("[DEBUG] Resume data: %s\n", resume_data);
     
     // Parse: RESUME_EXAM_OK|remaining_seconds|q1_id:text:A:B:C:D[:difficulty]:saved_answer|...
     
@@ -960,7 +943,6 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
     exam_duration = (remaining_seconds + 59) / 60;
     exam_start_time = time(NULL) - (exam_duration * 60 - remaining_seconds);
     
-    printf("[DEBUG] Remaining: %d seconds (~ %d minutes)\n", remaining_seconds, exam_duration);
     
     // Count questions
     total_questions = 0;
@@ -968,7 +950,6 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
         total_questions++;
     }
     
-    printf("[DEBUG] Total questions: %d\n", total_questions);
     
     if (total_questions == 0) {
         show_error_dialog("No questions found in resume data");
@@ -1051,7 +1032,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
             }
         }
         
-        printf("[DEBUG] Parsed Q%d: id=%d [%s] (answered=%d)\n", 
+        printf("[DEBUG] Resuming question %d: id=%d, diff=%s, answered=%d\n",
                q_idx + 1, questions[q_idx].question_id, questions[q_idx].difficulty, answered_questions[q_idx]);
         q_idx++;
     }

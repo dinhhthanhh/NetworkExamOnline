@@ -10,6 +10,22 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 
+// Forward declaration
+void create_admin_panel(void);
+
+// Idle callback for auto-refresh when room ends
+static gboolean idle_refresh_admin_panel(gpointer user_data) {
+    create_admin_panel();
+    return FALSE; // Remove idle callback after execution
+}
+
+// Callback when ROOM_ENDED broadcast received
+static void on_room_ended_broadcast(int room_id) {
+    // Schedule refresh in GTK main loop
+    g_idle_add(idle_refresh_admin_panel, NULL);
+}
+
+
 // Import questions from a CSV file into the currently selected room
 void on_import_csv_to_room(GtkWidget *widget, gpointer user_data)
 {
@@ -519,6 +535,11 @@ void create_admin_panel()
     g_signal_connect(create_btn, "clicked", G_CALLBACK(on_admin_create_room_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(top_button_box), create_btn, TRUE, TRUE, 0);
     
+    GtkWidget *refresh_btn = gtk_button_new_with_label("REFRESH");
+    style_button(refresh_btn, "#f39c12");
+    g_signal_connect(refresh_btn, "clicked", G_CALLBACK(create_admin_panel), NULL);
+    gtk_box_pack_start(GTK_BOX(top_button_box), refresh_btn, TRUE, TRUE, 0);
+    
     gtk_box_pack_start(GTK_BOX(vbox), top_button_box, FALSE, FALSE, 5);
     
     GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -697,6 +718,10 @@ void create_admin_panel()
 
     g_signal_connect(back_btn, "clicked", G_CALLBACK(create_main_menu), NULL);
     show_view(vbox);
+    
+    // Start listening for ROOM_ENDED broadcasts to auto-refresh
+    broadcast_on_room_ended(on_room_ended_broadcast);
+    broadcast_start_listener();
 }
 
 void create_question_bank_screen()

@@ -13,6 +13,6 @@ run: quiz_client
 	./quiz_client
 
 clean:
-	rm -f quiz_client *.o
+	rm -f quiz_client *.o client.log
 
 .PHONY: run clean

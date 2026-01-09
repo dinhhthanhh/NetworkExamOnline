@@ -12,6 +12,6 @@ run: quiz_server
 	./quiz_server
 
 clean:
-	rm -f quiz_server *.o quiz_app.db
+	rm -f quiz_server *.o quiz_app.db server.log
 
 .PHONY: run clean

@@ -9,24 +9,23 @@ extern sqlite3 *db;
 /*
  * Gửi thông tin thời gian còn lại của một phòng thi tới tất cả
  * thí sinh trong phòng (hiện tại mới xây dựng message, chưa gửi ra client).
+ * NOTE: This function is called from check_room_timeouts which already holds the mutex
  */
-void broadcast_time_update(int room_id, int time_remaining)
+void broadcast_time_update(int room_idx, int time_remaining)
 {
-  pthread_mutex_lock(&server_data.lock);
-
-  TestRoom *room = &server_data.rooms[room_id];
+  // NOTE: No mutex lock here - caller (check_room_timeouts) already holds the lock
+  
+  TestRoom *room = &server_data.rooms[room_idx];
 
   // Send time update to all participants
   char update[100];
-  snprintf(update, sizeof(update), "TIME_UPDATE|%d|%d\n", room_id, time_remaining);
+  snprintf(update, sizeof(update), "TIME_UPDATE|%d|%d\n", room->room_id, time_remaining);
 
   for (int i = 0; i < room->participant_count; i++)
   {
     // In a real app, we'd need to track client sockets for each participant
     // Currently, this function only updates server-side timer state.
   }
-
-  pthread_mutex_unlock(&server_data.lock);
 }
 
 /*
@@ -48,7 +47,7 @@ void check_room_timeouts(void)
     if (room->room_status == 1)  // STARTED
     { // Ongoing
       int elapsed = (int)(now - room->exam_start_time);
-      int remaining = room->time_limit - elapsed;
+      int remaining = (room->time_limit * 60) - elapsed;  // time_limit is in minutes, convert to seconds
 
       if (remaining > 0)
       {
@@ -59,12 +58,32 @@ void check_room_timeouts(void)
         // Time's up - auto-submit CHỈ users đang ONLINE
         room->room_status = 2; // Set status TO ENDED
 
+        // ===== PERSIST ENDED STATUS TO DATABASE =====
+        char update_status_sql[256];
+        snprintf(update_status_sql, sizeof(update_status_sql),
+                 "UPDATE rooms SET room_status = 2 WHERE id = %d", room->room_id);
+        char *update_err = NULL;
+        sqlite3_exec(db, update_status_sql, NULL, NULL, &update_err);
+        if (update_err) {
+          sqlite3_free(update_err);
+        } else {
+        }
+
+        // ===== BROADCAST ROOM_ENDED TO ALL ONLINE USERS =====
+        char end_broadcast[128];
+        snprintf(end_broadcast, sizeof(end_broadcast), "ROOM_ENDED|%d\n", room->room_id);
+        for (int u = 0; u < server_data.user_count; u++) {
+          if (server_data.users[u].is_online == 1) {
+            send(server_data.users[u].socket_fd, end_broadcast, strlen(end_broadcast), 0);
+          }
+        }
+
         // Query danh sách participants từ DB để lấy users đã bắt đầu thi
         char participant_query[512];
         snprintf(participant_query, sizeof(participant_query),
                  "SELECT DISTINCT p.user_id FROM participants p "
                  "WHERE p.room_id = %d AND p.start_time > 0",
-                 i);
+                 room->room_id);
 
         sqlite3_stmt *stmt;
         if (sqlite3_prepare_v2(db, participant_query, -1, &stmt, NULL) == SQLITE_OK) {
@@ -87,7 +106,7 @@ void check_room_timeouts(void)
               char check_result[256];
               snprintf(check_result, sizeof(check_result),
                        "SELECT id FROM results WHERE room_id = %d AND user_id = %d",
-                       i, user_id);
+                       room->room_id, user_id);
 
               sqlite3_stmt *check_stmt;
               int already_submitted = 0;
@@ -106,7 +125,7 @@ void check_room_timeouts(void)
                          "JOIN exam_questions q ON ua.question_id = q.id "
                          "WHERE ua.user_id = %d AND ua.room_id = %d "
                          "AND ua.selected_answer = q.correct_answer",
-                         user_id, i);
+                         user_id, room->room_id);
 
                 int score = 0;
                 sqlite3_stmt *score_stmt;
@@ -117,10 +136,10 @@ void check_room_timeouts(void)
                   sqlite3_finalize(score_stmt);
                 }
 
-                // Đếm tổng số câu hỏi
+                // Đếm tổng số câu hỏi đã được chọn (is_selected = 1)
                 char count_query[256];
                 snprintf(count_query, sizeof(count_query),
-                         "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d", i);
+                         "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room->room_id);
 
                 int total_questions = 0;
                 sqlite3_stmt *count_stmt;
@@ -136,7 +155,7 @@ void check_room_timeouts(void)
                 snprintf(insert_query, sizeof(insert_query),
                          "INSERT INTO results (user_id, room_id, score, total_questions, time_taken) "
                          "VALUES (%d, %d, %d, %d, %d)",
-                         user_id, i, score, total_questions, room->time_limit * 60);
+                         user_id, room->room_id, score, total_questions, room->time_limit * 60);
 
                 char *err_msg = NULL;
                 sqlite3_exec(db, insert_query, NULL, NULL, &err_msg);

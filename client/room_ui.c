@@ -13,7 +13,6 @@
 // Idle callback for safe refresh
 static gboolean idle_refresh_rooms(gpointer user_data) {
     if (rooms_list != NULL && GTK_IS_LIST_BOX(rooms_list)) {
-        printf("[ROOM_UI] Idle refresh: loading rooms list\n");
         load_rooms_list();
     }
     return FALSE; // Remove idle callback after execution
@@ -21,10 +20,15 @@ static gboolean idle_refresh_rooms(gpointer user_data) {
 
 // Callback when ROOM_CREATED broadcast received
 static void on_room_created_broadcast(int room_id, const char *room_name, int duration) {
-    printf("[ROOM_UI] Received ROOM_CREATED: %d - %s (%d min)\n", room_id, room_name, duration);
     
     // Schedule refresh in GTK main loop to avoid race conditions
     // This ensures the current event handler completes before refresh
+    g_idle_add(idle_refresh_rooms, NULL);
+}
+
+// Callback when ROOM_STARTED broadcast received - also refresh to show status change
+static void on_room_started_broadcast_list(int room_id, long start_time) {
+    // Refresh room list to show updated status
     g_idle_add(idle_refresh_rooms, NULL);
 }
 
@@ -50,7 +54,6 @@ void load_rooms_list()
 {
     // Validate socket before proceeding
     if (client.socket_fd <= 0) {
-        printf("[ROOM_UI] Invalid socket, cannot load rooms\n");
         return;
     }
     
@@ -58,7 +61,6 @@ void load_rooms_list()
     int flags = fcntl(client.socket_fd, F_GETFL, 0);
     if (flags >= 0) {
         fcntl(client.socket_fd, F_SETFL, flags & ~O_NONBLOCK);
-        printf("[ROOM_UI] Socket set to blocking mode\n");  // ← LOG
     }
     
     // Reset selected room
@@ -184,6 +186,13 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         return;
     }
 
+    // CRITICAL: Stop broadcast listener and flush buffer before JOIN_ROOM
+    // This clears any stale ROOM_STARTED broadcasts from socket
+    if (broadcast_is_listening()) {
+        broadcast_stop_listener();
+    }
+    flush_socket_buffer(client.socket_fd);
+    
     // Gửi lệnh JOIN_ROOM với room_id đã chọn
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "JOIN_ROOM|%d\n", selected_room_id);
@@ -204,7 +213,6 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         
         // Nếu có session cũ và chưa hết thời gian - TỰ ĐỘNG RESUME
         if (resume_n > 0 && strstr(resume_buffer, "RESUME_EXAM_OK")) {
-            printf("[ROOM_UI] Auto-resuming previous exam session\n");
             create_exam_page_from_resume(selected_room_id, resume_buffer);
             return;
         }
@@ -267,13 +275,14 @@ void on_join_room_clicked(GtkWidget *widget, gpointer data)
         }
         
         // Không có session cũ - BEGIN_EXAM trực tiếp (không cần dialog)
-        printf("[ROOM_UI] Starting new exam session\n");
         
         // CRITICAL: Stop broadcast listener before entering exam
         if (broadcast_is_listening()) {
             broadcast_stop_listener();
-            printf("[ROOM_UI] Stopped broadcast listener before exam\n");
         }
+        
+        // Flush socket buffer before BEGIN_EXAM request
+        flush_socket_buffer(client.socket_fd);
         
         char begin_cmd[128];
         snprintf(begin_cmd, sizeof(begin_cmd), "BEGIN_EXAM|%d\n", selected_room_id);
@@ -384,7 +393,6 @@ void create_test_mode_screen()
     // CRITICAL: Stop any existing broadcast listener to clean up old callbacks
     if (broadcast_is_listening()) {
         broadcast_stop_listener();
-        printf("[ROOM_UI] Stopped old broadcast listener before creating new screen\n");
     }
     
     // Reset global widget pointers
@@ -465,10 +473,10 @@ void create_test_mode_screen()
     // CRITICAL: Show UI FIRST before starting broadcast listener
     show_view(vbox);
     
-    // Start listening for ROOM_CREATED broadcasts AFTER UI is shown
+    // Start listening for broadcasts AFTER UI is shown
     broadcast_on_room_created(on_room_created_broadcast);
+    broadcast_on_room_started(on_room_started_broadcast_list);  // Also listen for ROOM_STARTED
     broadcast_start_listener();
-    printf("[ROOM_UI] Started listening for ROOM_CREATED broadcasts\n");
 }
 
 void create_exam_room_with_questions(GtkWidget *widget, gpointer user_data) {

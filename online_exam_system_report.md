@@ -50,6 +50,24 @@
 
 ### 2.2 Công nghệ & nền tảng
 
+#### Tính năng Logging
+Server và Client tự động redirect toàn bộ output (stdout/stderr) sang file log để dễ quản lý và debug:
+
+```c
+// server/quiz_server.c:43-51
+freopen("server.log", "a", stdout);
+freopen("server.log", "a", stderr);
+setvbuf(stdout, NULL, _IOLBF, 0);  // Line buffering
+setvbuf(stderr, NULL, _IONBF, 0);  // No buffering
+
+// client/main.c:19-26 (tương tự)
+freopen("client.log", "a", stdout);
+freopen("client.log", "a", stderr);
+```
+
+#### Dynamic Memory cho Questions
+Hệ thống sử dụng dynamic memory allocation (`malloc`/`free`) để truyền câu hỏi, cho phép xử lý số lượng câu hỏi không giới hạn (tested với 100+ câu).
+
 #### Socket & Networking
 | Công nghệ | Chi tiết |
 |-----------|----------|
@@ -181,11 +199,11 @@ NetworkExamOnline/
 │   ├── exam_room_creator.h
 │   └── Makefile
 ├── data/                           # Sample data files
-│   ├── questions.csv
-│   ├── questions_sample.csv
-│   ├── sample_exam_questions.csv
-│   └── users.csv
+│   ├── question_5.csv              # 5 câu hỏi mẫu (demo)
+│   ├── question_30.csv             # 30 câu hỏi (bài tập)
+│   └── question_100.csv            # 100 câu hỏi (thi thật)
 └── README.md
+└── online_exam_system_report.md    # Báo cáo kỹ thuật chi tiết
 ```
 
 ### 3.2 Bảng giải thích chi tiết
@@ -391,7 +409,7 @@ Results --> DB : flush_answers_to_db()
 | **Đóng gói** | Text-based, newline-terminated |
 | **Delimiter** | `|` (pipe) phân tách các field |
 | **Encoding** | ASCII/UTF-8 |
-| **Buffer size** | 4096 bytes |
+| **Buffer size** | 8192 bytes |
 
 **Evidence từ code:**
 ```c
@@ -399,7 +417,7 @@ Results --> DB : flush_answers_to_db()
 char *cmd = strtok(buffer, "|");
 
 // server/include/common.h:13
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 8192
 ```
 
 ### 6.2 Định dạng bản tin

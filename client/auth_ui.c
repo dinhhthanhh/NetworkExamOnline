@@ -66,10 +66,21 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
     }
     else
     {
+        const char *error_msg = "Login failed";
+        if (n > 0) {
+            if (strstr(buffer, "USER_NOT_FOUND")) {
+                error_msg = "Account does not exist";
+            } else if (strstr(buffer, "WRONG_PASSWORD")) {
+                error_msg = "Incorrect password";
+            } else if (strstr(buffer, "User is already logged in")) {
+                error_msg = "User is already logged in from another device";
+            }
+        }
+
         GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                   "Login failed");
+                                                   "%s", error_msg);
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
     }

@@ -1032,6 +1032,7 @@ void create_exam_page_from_resume(int room_id, char *resume_data) {
             }
         }
         
+        printf("[DEBUG] Resuming question %d: id=%d, diff=%s, answered=%d\n",
                q_idx + 1, questions[q_idx].question_id, questions[q_idx].difficulty, answered_questions[q_idx]);
         q_idx++;
     }

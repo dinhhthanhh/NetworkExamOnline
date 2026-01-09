@@ -1,3 +1,36 @@
 Bind failed: Address already in use
 Database initialized successfully
 Sample questions loaded
+Default admin account: username='admin', password='admin123'
+Server started on port 8888
+Default admin account: username='admin', password='admin123'
+Server started on port 8888
+[SERVER RECV fd=5] LOGIN|admin|admin123
+
+[SERVER SEND fd=5] LOGIN_OK|1|HO9WBmTk57i9Pe7INz7govrwlKUcmWR1uaY3N1mQ6SZV6elRer5QmvKVFo7zIZ1|admin
+
+[SERVER RECV fd=5] LIST_MY_ROOMS
+
+[SERVER SEND fd=5] LIST_MY_ROOMS_OK|0
+
+[SERVER RECV fd=5] CREATE_ROOM|1|1|0|0|0
+
+[SERVER SEND fd=5] CREATE_ROOM_OK|1|1|1|0|Easy:0 Medium:0 Hard:0
+
+[SERVER RECV fd=5] LIST_MY_ROOMS
+
+[SERVER SEND fd=5] LIST_MY_ROOMS_OK|1
+ROOM|1|1|1|Waiting|No questions
+
+[SERVER RECV fd=5] GET_ROOM_QUESTIONS|1
+
+[SERVER RECV fd=5] IMPORT_CSV|1|question_100.csv|7833
+
+[SERVER RECV fd=5] GET_ROOM_QUESTIONS|1
+
+Default admin account: username='admin', password='admin123'
+Server started on port 8888
+[SERVER RECV fd=5] LOGIN|admin|admin123
+
+[SERVER SEND fd=5] LOGIN_OK|1|udrPoKZxMFGX8WW2gJsGzgHpTpPCuYxm9mBv6ktQx9y5eU8IlyZkcqX5duFXSCI|admin
+

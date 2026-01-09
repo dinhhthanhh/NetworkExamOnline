@@ -106,7 +106,7 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
   hash_password(password, hashed_password);
 
   snprintf(query, sizeof(query),
-           "SELECT id, role FROM users WHERE username='%s' AND password='%s';", username, hashed_password);
+           "SELECT id, password, role FROM users WHERE username='%s';", username);
 
   pthread_mutex_lock(&server_data.lock);
 
@@ -114,10 +114,21 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
   {
     if (sqlite3_step(stmt) == SQLITE_ROW)
     {
+      const char *db_password = (const char *)sqlite3_column_text(stmt, 1);
+      
+      if (strcmp(db_password, hashed_password) != 0)
+      {
+        snprintf(response, sizeof(response), "LOGIN_FAIL|WRONG_PASSWORD\n");
+        sqlite3_finalize(stmt);
+        pthread_mutex_unlock(&server_data.lock);
+        server_send(socket_fd, response);
+        return;
+      }
+
       *user_id = sqlite3_column_int(stmt, 0);
       
-      // Get role (column 1)
-      const char *role = (const char *)sqlite3_column_text(stmt, 1);
+      // Get role (column 2)
+      const char *role = (const char *)sqlite3_column_text(stmt, 2);
       if (role) {
         strncpy(user_role, role, sizeof(user_role) - 1);
       }
@@ -198,7 +209,7 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
     }
     else
     {
-      snprintf(response, sizeof(response), "LOGIN_FAIL|Invalid credentials\n");
+      snprintf(response, sizeof(response), "LOGIN_FAIL|USER_NOT_FOUND\n");
     }
   }
 

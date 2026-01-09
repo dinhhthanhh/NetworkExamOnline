@@ -39,6 +39,17 @@ int main()
     memset(&server_data, 0, sizeof(server_data));
     pthread_mutex_init(&server_data.lock, NULL);
 
+    // Redirect stdout and stderr to server.log
+    if (freopen("server.log", "a", stdout) == NULL) {
+        perror("Failed to redirect stdout to server.log");
+    }
+    if (freopen("server.log", "a", stderr) == NULL) {
+        perror("Failed to redirect stderr to server.log");
+    }
+    // Set line buffering for stdout and no buffering for stderr
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     // Initialize DB and load questions
     init_database();
     load_users_from_db();  // Load users vào in-memory structure

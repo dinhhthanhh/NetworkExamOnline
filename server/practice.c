@@ -266,7 +266,8 @@ void create_practice_room(int socket_fd, int creator_id, char *room_name, int ti
              practice_id, room_name, time_limit, show_answers);
     send(socket_fd, response, strlen(response), 0);
     
-            practice_id, room_name, time_limit, show_answers);
+    printf("[DEBUG] create_practice_room: id=%d, name=%s, limit=%d, show=%d\n",
+           practice_id, room_name, time_limit, show_answers);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -829,6 +830,7 @@ void finish_practice_session(int socket_fd, int user_id, int practice_id) {
              practice_id, score, session->total_questions);
     send(socket_fd, response, strlen(response), 0);
     
+    printf("[DEBUG] finish_practice_session: user=%d, room=%d, score=%d/%d\n",
            user_id, practice_id, score, session->total_questions);
     
     pthread_mutex_unlock(&server_data.lock);
@@ -1125,6 +1127,7 @@ void save_practice_log(int user_id, int practice_id, int question_id, int answer
         sqlite3_bind_int(stmt, 6, (int)now);
         
         if (sqlite3_step(stmt) == SQLITE_DONE) {
+        printf("[DEBUG] save_practice_log: user=%d, room=%d, qid=%d, ans=%d, correct=%d\n",
                    user_id, practice_id, question_id, answer, is_correct);
         }
         sqlite3_finalize(stmt);
@@ -1324,6 +1327,7 @@ void get_practice_questions(int socket_fd, int user_id, int practice_id) {
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
+    printf("[DEBUG] get_practice_questions: count=%d, room=%d, user=%d\n",
            question_count, practice_id, user_id);
     
     pthread_mutex_unlock(&server_data.lock);
@@ -1414,6 +1418,7 @@ void update_practice_question(int socket_fd, int user_id, int practice_id, int q
     snprintf(response, sizeof(response), "UPDATE_PRACTICE_QUESTION_OK|Question updated successfully\n");
     send(socket_fd, response, strlen(response), 0);
     
+    printf("[DEBUG] update_practice_question: qid=%d, room=%d, user=%d\n",
            question_id, practice_id, user_id);
     log_activity(user_id, "UPDATE_PRACTICE_QUESTION", "Updated practice question");
     
@@ -1517,6 +1522,7 @@ void create_practice_question(int socket_fd, int user_id, int practice_id, char 
     snprintf(response, sizeof(response), "ADD_PRACTICE_QUESTION_OK|Question added successfully\n");
     send(socket_fd, response, strlen(response), 0);
     
+    printf("[DEBUG] create_practice_question: qid=%d, room=%d, user=%d\n",
            question_id, practice_id, user_id);
     log_activity(user_id, "CREATE_PRACTICE_QUESTION", "Created practice question");
     

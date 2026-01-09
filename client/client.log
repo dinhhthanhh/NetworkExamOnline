@@ -1,9 +1,0 @@
-connect(): Connection refused
-Connected to server.
-
-===== CLIENT SEND =====
-LOGIN|admin|admin123
-
-===== CLIENT RECV =====
-LOGIN_OK|1|udrPoKZxMFGX8WW2gJsGzgHpTpPCuYxm9mBv6ktQx9y5eU8IlyZkcqX5duFXSCI|admin
-

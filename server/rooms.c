@@ -781,7 +781,6 @@ void start_test(int socket_fd, int user_id, int room_id) {
     snprintf(reset_sql, sizeof(reset_sql),
              "UPDATE exam_questions SET is_selected = 0 WHERE room_id = %d", room_id);
     if (sqlite3_exec(db, reset_sql, 0, 0, &err_msg) != SQLITE_OK) {
-      printf("[ERROR] Failed to reset is_selected: %s\n", err_msg);
       sqlite3_free(err_msg);
       err_msg = NULL;
     }
@@ -802,7 +801,6 @@ void start_test(int socket_fd, int user_id, int room_id) {
         snprintf(diff_query, sizeof(diff_query),
                  "SELECT id FROM exam_questions WHERE room_id = %d AND TRIM(LOWER(difficulty)) = '%s' ORDER BY RANDOM() LIMIT %d",
                  room_id, difficulties[d], counts[d]);
-        printf("[DEBUG] Selecting %s questions: %s\n", difficulties[d], diff_query);
         
         sqlite3_stmt *s;
         if (sqlite3_prepare_v2(db, diff_query, -1, &s, NULL) == SQLITE_OK) {
@@ -814,18 +812,15 @@ void start_test(int socket_fd, int user_id, int room_id) {
             if (sqlite3_exec(db, mark_sql, NULL, NULL, NULL) == SQLITE_OK) {
               selected_total++;
               (*selected_counts[d])++;
-              printf("[DEBUG] Selected question ID=%d for %s difficulty\n", qid, difficulties[d]);
             }
           }
           sqlite3_finalize(s);
         } else {
-          printf("[ERROR] Failed to prepare query for %s: %s\n", difficulties[d], sqlite3_errmsg(db));
         }
       }
     }
 
     // Log tổng kết số câu đã chọn theo từng difficulty
-    printf("[INFO] Room %d (Random Mode) - Questions selected: Easy=%d/%d, Medium=%d/%d, Hard=%d/%d, Total=%d\n",
            room_id, easy_selected, easy_count, medium_selected, medium_count, 
            hard_selected, hard_count, selected_total);
   } else {
@@ -843,7 +838,6 @@ void start_test(int socket_fd, int user_id, int room_id) {
       sqlite3_finalize(count_stmt);
     }
     
-    printf("[INFO] Room %d (Manual Mode) - Using %d pre-selected questions\n",
            room_id, selected_total);
   }
 
@@ -869,7 +863,6 @@ void start_test(int socket_fd, int user_id, int room_id) {
   snprintf(update_sql, sizeof(update_sql),
            "UPDATE rooms SET room_status = 1, exam_start_time = %ld WHERE id = %d", (long)start_time, room_id);
   if (sqlite3_exec(db, update_sql, 0, 0, &err_msg) != SQLITE_OK) {
-    printf("[ERROR] Failed to update room status in DB: %s\n", err_msg);
     sqlite3_free(err_msg);
   }
 
@@ -910,10 +903,10 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
         room_idx = server_data.room_count;
         server_data.rooms[room_idx].room_id = room_id;
         
-        // Load info từ DB
+        // Load info từ DB (including room_status and exam_start_time for late joiners)
         char room_info_query[256];
         snprintf(room_info_query, sizeof(room_info_query),
-                 "SELECT name, host_id, duration FROM rooms WHERE id = %d", room_id);
+                 "SELECT name, host_id, duration, room_status, exam_start_time FROM rooms WHERE id = %d", room_id);
         sqlite3_stmt *room_stmt;
         if (sqlite3_prepare_v2(db, room_info_query, -1, &room_stmt, NULL) == SQLITE_OK) {
             if (sqlite3_step(room_stmt) == SQLITE_ROW) {
@@ -924,8 +917,9 @@ void handle_begin_exam(int socket_fd, int user_id, int room_id)
                 }
                 server_data.rooms[room_idx].creator_id = sqlite3_column_int(room_stmt, 1);
                 server_data.rooms[room_idx].time_limit = sqlite3_column_int(room_stmt, 2);
-                server_data.rooms[room_idx].room_status = 0;  // WAITING by default
-                server_data.rooms[room_idx].exam_start_time = 0;
+                // ===== FIX: Load actual room_status and exam_start_time from DB =====
+                server_data.rooms[room_idx].room_status = sqlite3_column_int(room_stmt, 3);
+                server_data.rooms[room_idx].exam_start_time = sqlite3_column_int64(room_stmt, 4);
                 
                 // Đếm số câu hỏi
                 char count_query[256];
@@ -1765,12 +1759,10 @@ void update_exam_question(int socket_fd, int user_id, int room_id, int question_
     
     if (rc == SQLITE_OK) {
         send(socket_fd, "UPDATE_QUESTION_OK\n", 19, 0);
-        printf("[UPDATE_QUESTION] Question %d updated in room %d by user %d\n",
                question_id, room_id, user_id);
     } else {
         send(socket_fd, "UPDATE_QUESTION_FAIL|Database error\n", 37, 0);
         if (err_msg) {
-            fprintf(stderr, "[UPDATE_QUESTION] Error: %s\n", err_msg);
             sqlite3_free(err_msg);
         }
     }
@@ -1842,7 +1834,6 @@ void update_room_question(int socket_fd, int user_id, int room_id, int question_
     
     if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
         snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_FAIL|Database error\n");
-        fprintf(stderr, "[UPDATE_ROOM_QUESTION] DB error: %s\n", err_msg);
         sqlite3_free(err_msg);
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
@@ -1867,7 +1858,6 @@ void update_room_question(int socket_fd, int user_id, int room_id, int question_
     snprintf(response, sizeof(response), "UPDATE_ROOM_QUESTION_OK|Question updated successfully\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[UPDATE_ROOM_QUESTION] Success: Question %d updated in room %d by user %d\n",
            question_id, room_id, user_id);
     log_activity(user_id, "UPDATE_ROOM_QUESTION", "Updated exam question");
     
@@ -1993,7 +1983,6 @@ void set_question_selected(int socket_fd, int user_id, int room_id, int question
     snprintf(response, sizeof(response), "SET_QUESTION_SELECTED_OK|%d|%d|%d\n",
              room_id, question_id, is_selected);
     server_send(socket_fd, response);
-    printf("[INFO] Question %d in room %d set is_selected=%d by user %d\n",
            question_id, room_id, is_selected, user_id);
   } else {
     char response[256];
@@ -2061,7 +2050,6 @@ void set_room_selection_mode(int socket_fd, int user_id, int room_id, int select
     snprintf(response, sizeof(response), "SET_SELECTION_MODE_OK|%d|%d\n",
              room_id, selection_mode);
     server_send(socket_fd, response);
-    printf("[INFO] Room %d selection_mode set to %d by user %d\n",
            room_id, selection_mode, user_id);
   } else {
     char response[256];
@@ -2135,7 +2123,6 @@ void update_room_difficulty(int socket_fd, int user_id, int room_id, int easy_co
     snprintf(response, sizeof(response), "UPDATE_DIFFICULTY_OK|%d|%d|%d|%d\n",
              room_id, easy_count, medium_count, hard_count);
     server_send(socket_fd, response);
-    printf("[INFO] Room %d difficulty updated: E=%d M=%d H=%d by user %d\n",
            room_id, easy_count, medium_count, hard_count, user_id);
   } else {
     char response[256];

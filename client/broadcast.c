@@ -14,6 +14,7 @@ extern ClientData client;
 static RoomStartedCallback room_started_callback = NULL;
 static RoomCreatedCallback room_created_callback = NULL;
 static RoomDeletedCallback room_deleted_callback = NULL;
+static RoomEndedCallback room_ended_callback = NULL;
 static PracticeClosedCallback practice_closed_callback = NULL;
 
 // Listener state
@@ -41,12 +42,12 @@ static int is_broadcast_message(const char *message) {
     return (strncmp(message, "ROOM_STARTED", 12) == 0 ||
             strncmp(message, "ROOM_CREATED", 12) == 0 ||
             strncmp(message, "ROOM_DELETED", 12) == 0 ||
+            strncmp(message, "ROOM_ENDED", 10) == 0 ||
             strncmp(message, "PRACTICE_CLOSED", 15) == 0);
 }
 
 // Parse and handle broadcast messages
 static void handle_broadcast_message(const char *message) {
-    printf("[BROADCAST] Received: %s\n", message);
     
     // Parse ROOM_STARTED|room_id|start_time
     if (strncmp(message, "ROOM_STARTED", 12) == 0) {
@@ -63,7 +64,6 @@ static void handle_broadcast_message(const char *message) {
             int room_id = atoi(room_id_str);
             long start_time = atol(start_time_str);
             
-            printf("[BROADCAST] Room %d started at %ld\n", room_id, start_time);
             room_started_callback(room_id, start_time);
         }
     }
@@ -80,7 +80,6 @@ static void handle_broadcast_message(const char *message) {
 
         if (practice_id_str && room_name && practice_closed_callback) {
             int practice_id = atoi(practice_id_str);
-            printf("[BROADCAST] Practice room %d closed: %s\n", practice_id, room_name);
             practice_closed_callback(practice_id, room_name);
         }
     }
@@ -100,7 +99,6 @@ static void handle_broadcast_message(const char *message) {
             int room_id = atoi(room_id_str);
             int duration = atoi(duration_str);
             
-            printf("[BROADCAST] Room %d created: %s (%d min)\n", room_id, room_name, duration);
             room_created_callback(room_id, room_name, duration);
         }
     }
@@ -117,8 +115,23 @@ static void handle_broadcast_message(const char *message) {
         if (room_id_str && room_deleted_callback) {
             int room_id = atoi(room_id_str);
             
-            printf("[BROADCAST] Room %d was deleted by admin\n", room_id);
             room_deleted_callback(room_id);
+        }
+    }
+    // Parse ROOM_ENDED|room_id
+    else if (strncmp(message, "ROOM_ENDED", 10) == 0) {
+        char msg_copy[512];
+        strncpy(msg_copy, message, sizeof(msg_copy) - 1);
+        msg_copy[sizeof(msg_copy) - 1] = '\0';
+        
+        char *ptr = msg_copy;
+        strtok(ptr, "|"); // Skip "ROOM_ENDED"
+        char *room_id_str = strtok(NULL, "|");
+        
+        if (room_id_str && room_ended_callback) {
+            int room_id = atoi(room_id_str);
+            
+            room_ended_callback(room_id);
         }
     }
 }
@@ -182,7 +195,6 @@ static gboolean poll_broadcasts(gpointer user_data) {
 // Start periodic listener that polls for ROOM_* broadcasts from the server
 void broadcast_start_listener(void) {
     if (is_listening) {
-        printf("[BROADCAST] Listener already running\n");
         return;
     }
     
@@ -191,7 +203,6 @@ void broadcast_start_listener(void) {
     // Poll every 200ms using GTK timer
     timer_id = g_timeout_add(200, poll_broadcasts, NULL);
     
-    printf("[BROADCAST] Listener started (polling every 200ms with non-blocking I/O)\n");
 }
 
 // Stop the broadcast listener and restore blocking mode on the socket
@@ -210,7 +221,6 @@ void broadcast_stop_listener(void) {
     // Restore blocking mode on socket
     set_blocking(client.socket_fd);
     
-    printf("[BROADCAST] Listener stopped\n");
 }
 
 // Check if the broadcast listener is currently running
@@ -235,4 +245,8 @@ void broadcast_on_room_deleted(RoomDeletedCallback callback) {
 
 void broadcast_on_practice_closed(PracticeClosedCallback callback) {
     practice_closed_callback = callback;
+}
+
+void broadcast_on_room_ended(RoomEndedCallback callback) {
+    room_ended_callback = callback;
 }

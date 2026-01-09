@@ -190,7 +190,6 @@ void login_user(int socket_fd, char *username, char *password, int *user_id)
                "UPDATE users SET is_online = 1 WHERE id = %d;", *user_id);
       sqlite3_exec(db, update_query, 0, 0, &err_msg);
       if (err_msg) {
-        fprintf(stderr, "[LOGIN] Failed to update is_online in DB: %s\n", err_msg);
         sqlite3_free(err_msg);
       }
 
@@ -250,7 +249,6 @@ void logout_user(int user_id, int socket_fd)
              "UPDATE users SET is_online = 0 WHERE id = %d;", logged_out_user_id);
     sqlite3_exec(db, update_query, 0, 0, &err_msg);
     if (err_msg) {
-      fprintf(stderr, "[LOGOUT] Failed to update is_online in DB: %s\n", err_msg);
       sqlite3_free(err_msg);
     }
   }

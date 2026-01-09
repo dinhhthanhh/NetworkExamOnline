@@ -266,7 +266,6 @@ void create_practice_room(int socket_fd, int creator_id, char *room_name, int ti
              practice_id, room_name, time_limit, show_answers);
     send(socket_fd, response, strlen(response), 0);
     
-        printf("Practice room created: ID=%d, Name=%s, Cooldown=%d, ShowAnswers=%d\n", 
             practice_id, room_name, time_limit, show_answers);
     
     pthread_mutex_unlock(&server_data.lock);
@@ -664,7 +663,6 @@ void join_practice_room(int socket_fd, int user_id, int practice_id) {
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("User %d joined practice room %d (session %d)\n", user_id, practice_id, session_id);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -831,7 +829,6 @@ void finish_practice_session(int socket_fd, int user_id, int practice_id) {
              practice_id, score, session->total_questions);
     send(socket_fd, response, strlen(response), 0);
     
-    printf("User %d finished practice %d with score %d/%d\n", 
            user_id, practice_id, score, session->total_questions);
     
     pthread_mutex_unlock(&server_data.lock);
@@ -997,7 +994,6 @@ void close_practice_room(int socket_fd, int user_id, int practice_id) {
     snprintf(response, sizeof(response), "CLOSE_PRACTICE_OK|%d\n", practice_id);
     send(socket_fd, response, strlen(response), 0);
     
-    printf("Practice room %d closed by user %d\n", practice_id, user_id);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -1035,7 +1031,6 @@ void open_practice_room(int socket_fd, int user_id, int practice_id) {
     snprintf(response, sizeof(response), "OPEN_PRACTICE_OK|%d\n", practice_id);
     send(socket_fd, response, strlen(response), 0);
     
-    printf("Practice room %d opened by user %d\n", practice_id, user_id);
     
     pthread_mutex_unlock(&server_data.lock);
 }
@@ -1130,7 +1125,6 @@ void save_practice_log(int user_id, int practice_id, int question_id, int answer
         sqlite3_bind_int(stmt, 6, (int)now);
         
         if (sqlite3_step(stmt) == SQLITE_DONE) {
-            printf("Practice log saved: user=%d, practice=%d, question=%d, answer=%d, correct=%d\n",
                    user_id, practice_id, question_id, answer, is_correct);
         }
         sqlite3_finalize(stmt);
@@ -1189,7 +1183,6 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
     char response[256];
     
     if (room == NULL) {
-        snprintf(response, sizeof(response), "DELETE_PRACTICE_FAIL|Practice room not found\n");
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
@@ -1209,21 +1202,18 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
     // Delete practice sessions first (foreign key constraint)
     snprintf(query, sizeof(query), "DELETE FROM practice_sessions WHERE practice_id=%d;", practice_id);
     if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
-        fprintf(stderr, "[DELETE_PRACTICE] Failed to delete sessions: %s\n", err_msg);
         sqlite3_free(err_msg);
     }
     
     // Delete practice logs
     snprintf(query, sizeof(query), "DELETE FROM practice_logs WHERE practice_id=%d;", practice_id);
     if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
-        fprintf(stderr, "[DELETE_PRACTICE] Failed to delete logs: %s\n", err_msg);
         sqlite3_free(err_msg);
     }
     
     // Delete practice_questions mapping
     snprintf(query, sizeof(query), "DELETE FROM practice_questions WHERE practice_id=%d;", practice_id);
     if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
-        fprintf(stderr, "[DELETE_PRACTICE] Failed to delete practice_questions: %s\n", err_msg);
         sqlite3_free(err_msg);
     }
     
@@ -1231,7 +1221,6 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
     snprintf(query, sizeof(query), "DELETE FROM practice_rooms WHERE id=%d;", practice_id);
     if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
         snprintf(response, sizeof(response), "DELETE_PRACTICE_FAIL|Database error: %s\n", err_msg);
-        fprintf(stderr, "[DELETE_PRACTICE] Failed to delete room: %s\n", err_msg);
         sqlite3_free(err_msg);
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
@@ -1257,7 +1246,6 @@ void delete_practice_room(int socket_fd, int user_id, int practice_id) {
         }
     }
     
-    snprintf(response, sizeof(response), "DELETE_PRACTICE_OK|Practice room deleted successfully\n");
     send(socket_fd, response, strlen(response), 0);
     log_activity(user_id, "DELETE_PRACTICE", "Deleted practice room");
     
@@ -1336,7 +1324,6 @@ void get_practice_questions(int socket_fd, int user_id, int practice_id) {
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[GET_PRACTICE_QUESTIONS] Success: Sent %d questions from room %d to user %d\n",
            question_count, practice_id, user_id);
     
     pthread_mutex_unlock(&server_data.lock);
@@ -1403,7 +1390,6 @@ void update_practice_question(int socket_fd, int user_id, int practice_id, int q
     
     if (sqlite3_exec(db, query, 0, 0, &err_msg) != SQLITE_OK) {
         snprintf(response, sizeof(response), "UPDATE_PRACTICE_QUESTION_FAIL|Database error\n");
-        fprintf(stderr, "[UPDATE_PRACTICE_QUESTION] DB error: %s\n", err_msg);
         sqlite3_free(err_msg);
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
@@ -1428,7 +1414,6 @@ void update_practice_question(int socket_fd, int user_id, int practice_id, int q
     snprintf(response, sizeof(response), "UPDATE_PRACTICE_QUESTION_OK|Question updated successfully\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[UPDATE_PRACTICE_QUESTION] Success: Question %d updated in room %d by user %d\n",
            question_id, practice_id, user_id);
     log_activity(user_id, "UPDATE_PRACTICE_QUESTION", "Updated practice question");
     
@@ -1502,7 +1487,6 @@ void create_practice_question(int socket_fd, int user_id, int practice_id, char 
     char *err_msg = NULL;
     if (sqlite3_exec(db, query, NULL, NULL, &err_msg) != SQLITE_OK) {
         snprintf(response, sizeof(response), "ADD_PRACTICE_QUESTION_FAIL|Database error\n");
-        fprintf(stderr, "[CREATE_PRACTICE_QUESTION] DB error: %s\n", err_msg);
         sqlite3_free(err_msg);
         send(socket_fd, response, strlen(response), 0);
         sqlite3_free(query);
@@ -1533,7 +1517,6 @@ void create_practice_question(int socket_fd, int user_id, int practice_id, char 
     snprintf(response, sizeof(response), "ADD_PRACTICE_QUESTION_OK|Question added successfully\n");
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[CREATE_PRACTICE_QUESTION] Success: Question %d added to practice room %d by user %d\n",
            question_id, practice_id, user_id);
     log_activity(user_id, "CREATE_PRACTICE_QUESTION", "Created practice question");
     
@@ -1673,7 +1656,6 @@ void import_practice_csv(int socket_fd, int user_id, int practice_id, const char
     snprintf(response, sizeof(response), "IMPORT_PRACTICE_CSV_OK|%d\n", imported);
     send(socket_fd, response, strlen(response), 0);
     
-    printf("[IMPORT_PRACTICE_CSV] Success: Imported %d questions to practice room %d\n", imported, practice_id);
     log_activity(user_id, "IMPORT_PRACTICE_CSV", "Imported practice questions from CSV");
     
     pthread_mutex_unlock(&server_data.lock);

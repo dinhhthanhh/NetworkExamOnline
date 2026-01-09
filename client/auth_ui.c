@@ -54,7 +54,6 @@ void on_login_clicked(GtkWidget *widget, gpointer data)
                     strncpy(client.role, role_start, sizeof(client.role) - 1);
                     client.role[sizeof(client.role) - 1] = '\0';
                     
-                    printf("[INFO] Logged in as '%s' with role '%s'\n", username, client.role);
                 } else {
                     // Default role if not provided
                     strcpy(client.role, "user");

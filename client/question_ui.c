@@ -39,7 +39,6 @@ static void on_selection_mode_toggled(GtkSwitch *switch_widget, gboolean state, 
     
     if (n > 0 && strncmp(buffer, "SET_SELECTION_MODE_OK", 21) == 0) {
         current_selection_mode = new_mode;
-        printf("[UI] Selection mode changed to %s\n", new_mode ? "Manual" : "Random");
         // Refresh the view to update checkbox states
         show_exam_question_manager(NULL, GINT_TO_POINTER(room_id));
     } else {
@@ -72,7 +71,6 @@ static void on_question_selection_toggled(GtkToggleButton *toggle, gpointer data
         // Revert the toggle
         gtk_toggle_button_set_active(toggle, !is_selected);
     } else {
-        printf("[UI] Question %d selection set to %d\n", question_id, is_selected);
     }
 }
 

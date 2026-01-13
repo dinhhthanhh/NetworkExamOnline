@@ -7,5 +7,7 @@ void register_user(int socket_fd, char *username, char *password);
 void login_user(int socket_fd, char *username, char *password, int *user_id);
 void logout_user(int user_id, int socket_fd);
 void generate_session_token(char *token, size_t len);
+void change_password(int socket_fd, int user_id, char *old_password, char *new_password);
+void hash_password(const char *password, char *hashed_output);
 
 #endif

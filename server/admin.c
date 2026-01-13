@@ -6,6 +6,11 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
+/*
+ * Tổng hợp số liệu tổng quan cho màn hình dashboard admin:
+ *  - Tổng số user, số room, số câu hỏi, tổng lượt thi
+ *  - Số user đang được load trong server_data.
+ */
 void get_admin_dashboard(int socket_fd, int admin_id)
 {
   char query[500];
@@ -49,6 +54,10 @@ void get_admin_dashboard(int socket_fd, int admin_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Trả về danh sách user đang có trong bộ nhớ server_data
+ * để admin xem trạng thái (online/offline) và thông tin cơ bản.
+ */
 void manage_users(int socket_fd, int admin_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -72,6 +81,10 @@ void manage_users(int socket_fd, int admin_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Trả về danh sách các câu hỏi hiện đang nạp vào server_data
+ * (tối đa 100 câu) cho màn hình quản trị câu hỏi.
+ */
 void manage_questions(int socket_fd, int admin_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -94,6 +107,12 @@ void manage_questions(int socket_fd, int admin_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Lấy thống kê hệ thống cho admin:
+ *  - Điểm trung bình của tất cả bài thi
+ *  - Category được làm nhiều nhất
+ *  - Tổng số câu hỏi trong bộ nhớ.
+ */
 void get_system_stats(int socket_fd, int admin_id)
 {
   char query[800];
@@ -114,7 +133,7 @@ void get_system_stats(int socket_fd, int admin_id)
     sqlite3_finalize(stmt);
 
     // Get most popular category
-    strcpy(query, "SELECT category, COUNT(*) as cnt FROM questions GROUP BY category ORDER BY cnt DESC LIMIT 1;");
+    strcpy(query, "SELECT category, COUNT(*) as cnt FROM exam_questions GROUP BY category ORDER BY cnt DESC LIMIT 1;");
     if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK)
     {
       const char *popular_cat = "N/A";
@@ -135,6 +154,12 @@ void get_system_stats(int socket_fd, int admin_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Ban user:
+ *  - Xóa user khỏi bảng users
+ *  - Loại bỏ user khỏi mảng server_data.users
+ *  - Ghi log hành động BAN_USER.
+ */
 void ban_user(int socket_fd, int admin_id, int target_user_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -174,12 +199,18 @@ void ban_user(int socket_fd, int admin_id, int target_user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Xóa câu hỏi exam_questions theo id:
+ *  - Xóa trong DB
+ *  - Gỡ khỏi mảng server_data.questions nếu đang cache
+ *  - Ghi log DELETE_QUESTION.
+ */
 void delete_question(int socket_fd, int admin_id, int question_id)
 {
   pthread_mutex_lock(&server_data.lock);
 
   char query[300];
-  snprintf(query, sizeof(query), "DELETE FROM questions WHERE id = %d;", question_id);
+  snprintf(query, sizeof(query), "DELETE FROM exam_questions WHERE id = %d;", question_id);
 
   char *err_msg = 0;
   if (sqlite3_exec(db, query, 0, 0, &err_msg) == SQLITE_OK)

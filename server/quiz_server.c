@@ -3,6 +3,10 @@
 #include "db.h"
 #include "questions.h"
 #include "rooms.h"
+<<<<<<< HEAD
+=======
+#include "practice.h"
+>>>>>>> 4a33a224791759951890cbd929b10a252b027d31
 #include "timer.h"
 
 #include <stdio.h>
@@ -18,6 +22,7 @@
 ServerData server_data;
 sqlite3 *db = NULL;
 
+<<<<<<< HEAD
 // Timer thread
 void *timer_thread(void *arg) {
     (void)arg;  // Unused
@@ -29,6 +34,14 @@ void *timer_thread(void *arg) {
         check_room_timeouts();
     }
     
+=======
+// Timer thread function - checks room timeouts every 5 seconds
+void *timer_thread(void *arg) {
+    while (1) {
+        sleep(5);
+        check_room_timeouts();
+    }
+>>>>>>> 4a33a224791759951890cbd929b10a252b027d31
     return NULL;
 }
 
@@ -37,16 +50,28 @@ int main()
     int server_socket, *client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len;
-    pthread_t thread_id;
+    pthread_t thread_id, timer_tid;
 
     // Zero initialize server data
     memset(&server_data, 0, sizeof(server_data));
     pthread_mutex_init(&server_data.lock, NULL);
 
+    // Redirect stdout and stderr to server.log
+    if (freopen("server.log", "a", stdout) == NULL) {
+        perror("Failed to redirect stdout to server.log");
+    }
+    if (freopen("server.log", "a", stderr) == NULL) {
+        perror("Failed to redirect stderr to server.log");
+    }
+    // Set line buffering for stdout and no buffering for stderr
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     // Initialize DB and load questions
     init_database();
     load_users_from_db();  // Load users vào in-memory structure
     load_rooms_from_db();  // Load rooms vào in-memory structure
+    load_practice_rooms_from_db();  // Load practice rooms
     // load_sample_questions();
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -79,6 +104,13 @@ int main()
     }
 
     printf("Server started on port %d\n", PORT);
+    
+    // Start timer thread for room timeout checks
+    if (pthread_create(&timer_tid, NULL, timer_thread, NULL) != 0) {
+        perror("Failed to create timer thread");
+    } else {
+        pthread_detach(timer_tid);
+    }
 
     // Khởi động timer thread
     pthread_t timer_tid;
@@ -105,7 +137,6 @@ int main()
             continue;
         }
 
-        printf("New client connected: %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
         if (pthread_create(&thread_id, NULL, handle_client, (void *)client_socket) != 0)
         {
             perror("pthread_create failed");

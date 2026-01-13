@@ -5,6 +5,9 @@
 
 // Main menu
 void create_main_menu(void);
+void on_admin_logout_clicked(GtkWidget *widget, gpointer data);
+void on_user_logout_clicked(GtkWidget *widget, gpointer data);
+void on_admin_create_practice_clicked(GtkWidget *widget, gpointer data);
 
 // Global variables (extern declarations)
 extern ClientData client;

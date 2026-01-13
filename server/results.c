@@ -5,7 +5,10 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-// Helper: Tìm room index trong server_data.rooms[]
+/*
+ * Helper nội bộ: tìm index của room trong mảng server_data.rooms
+ * theo room_id thật lấy từ DB.
+ */
 static int find_room_index(int room_id) {
     for (int i = 0; i < server_data.room_count; i++) {
         if (server_data.rooms[i].room_id == room_id) {
@@ -15,7 +18,10 @@ static int find_room_index(int room_id) {
     return -1;
 }
 
-// Helper: Tìm user index trong room->participants[]
+/*
+ * Helper nội bộ: tìm vị trí của một user trong danh sách participants
+ * của một TestRoom.
+ */
 static int find_participant_index(TestRoom *room, int user_id) {
     for (int i = 0; i < room->participant_count; i++) {
         if (room->participants[i] == user_id) {
@@ -25,15 +31,15 @@ static int find_participant_index(TestRoom *room, int user_id) {
     return -1;
 }
 
-// Helper: Ghi toàn bộ đáp án của 1 user vào DB (batch write)
+/*
+ * Helper: ghi toàn bộ đáp án đang lưu in-memory của một user trong room
+ * xuống bảng exam_answers theo dạng batch (xóa cũ, thêm mới trong transaction).
+ */
 static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int user_idx) {
-    printf("[FLUSH] Starting flush for user %d in room %d (user_idx=%d)\n", 
-           user_id, room_id, user_idx);
-    
     // Xóa các đáp án cũ trong DB
     char delete_query[256];
     snprintf(delete_query, sizeof(delete_query),
-             "DELETE FROM user_answers WHERE user_id = %d AND room_id = %d",
+             "DELETE FROM exam_answers WHERE user_id = %d AND room_id = %d",
              user_id, room_id);
     sqlite3_exec(db, delete_query, NULL, NULL, NULL);
     
@@ -46,7 +52,7 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
             // Lấy question_id thực tế từ DB
             char get_qid_query[256];
             snprintf(get_qid_query, sizeof(get_qid_query),
-                     "SELECT id FROM questions WHERE room_id = %d LIMIT 1 OFFSET %d",
+                     "SELECT id FROM exam_questions WHERE room_id = %d AND is_selected = 1 LIMIT 1 OFFSET %d",
                      room_id, q);
             
             sqlite3_stmt *stmt;
@@ -56,7 +62,7 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
                     
                     char insert_query[512];
                     snprintf(insert_query, sizeof(insert_query),
-                             "INSERT INTO user_answers (user_id, room_id, question_id, selected_answer, answered_at) "
+                             "INSERT INTO exam_answers (user_id, room_id, question_id, selected_answer, answered_at) "
                              "VALUES (%d, %d, %d, %d, %ld)",
                              user_id, room_id, question_id, ans->answer, ans->submit_time);
                     sqlite3_exec(db, insert_query, NULL, NULL, NULL);
@@ -67,17 +73,21 @@ static void flush_answers_to_db(int user_id, int room_id, TestRoom *room, int us
     }
     
     sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
-    printf("[FLUSH] Saved answers for user %d in room %d to DB\n", user_id, room_id);
 }
 
-// Lưu đáp án vào IN-MEMORY (thay vì ghi trực tiếp DB)
+/*
+ * Lưu tạm thời đáp án vào bộ nhớ RAM cho một câu hỏi:
+ *  - Validate answer và quyền tham gia phòng
+ *  - Map question_id thực sang index trong mảng
+ *  - Tự động flush xuống DB mỗi 5 câu hoặc khi làm xong toàn bộ.
+ */
 void save_answer(int socket_fd, int user_id, int room_id, int question_id, int selected_answer)
 {
     pthread_mutex_lock(&server_data.lock);
     
     // Validate selected_answer (0-3 = A-D)
     if (selected_answer < 0 || selected_answer > 3) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Invalid answer\n", 33, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Invalid answer\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -85,7 +95,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm room trong in-memory structure
     int room_idx = find_room_index(room_id);
     if (room_idx == -1) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Room not found\n", 34, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Room not found\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -95,7 +105,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm user trong participants
     int user_idx = find_participant_index(room, user_id);
     if (user_idx == -1) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Not a participant\n", 37, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Not a participant\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -103,7 +113,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     // Tìm question index (question_id → index trong mảng)
     char get_q_index[256];
     snprintf(get_q_index, sizeof(get_q_index),
-             "SELECT COUNT(*) - 1 FROM questions WHERE room_id = %d AND id <= %d",
+             "SELECT COUNT(*) - 1 FROM exam_questions WHERE room_id = %d AND is_selected = 1 AND id <= %d",
              room_id, question_id);
     
     sqlite3_stmt *stmt;
@@ -116,7 +126,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     }
     
     if (question_idx < 0 || question_idx >= MAX_QUESTIONS) {
-        send(socket_fd, "SAVE_ANSWER_FAIL|Invalid question\n", 36, 0);
+        server_send(socket_fd, "SAVE_ANSWER_FAIL|Invalid question\n");
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
@@ -126,10 +136,7 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     room->answers[user_idx][question_idx].answer = selected_answer;
     room->answers[user_idx][question_idx].submit_time = time(NULL);
     
-    send(socket_fd, "SAVE_ANSWER_OK\n", 16, 0);
-    
-    printf("[MEMORY] User %d answered Q%d = %d in room %d (in-memory)\n", 
-           user_id, question_idx, selected_answer, room_id);
+    server_send(socket_fd, "SAVE_ANSWER_OK\n");
     
     // **LUÔN FLUSH VÀO DB NGAY (để tránh mất data khi disconnect)**
     flush_answers_to_db(user_id, room_id, room, user_idx);
@@ -137,6 +144,10 @@ void save_answer(int socket_fd, int user_id, int room_id, int question_id, int s
     pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Submit đáp án theo số thứ tự câu hỏi (logic cũ, vẫn giữ để tương thích):
+ *  - Ghi trực tiếp vào mảng room->answers[room_id][question_num].
+ */
 void submit_answer(int socket_fd, int user_id, int room_id, int question_num, int answer)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -160,12 +171,19 @@ void submit_answer(int socket_fd, int user_id, int room_id, int question_num, in
     room->answers[user_idx][question_num].submit_time = time(NULL);
 
     char response[] = "SUBMIT_ANSWER_OK\n";
-    send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
   }
 
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Người dùng nộp bài thi:
+ *  - Flush toàn bộ đáp án in-memory xuống DB
+ *  - Kiểm tra đã bắt đầu thi, kiểm tra hết giờ
+ *  - Tính điểm từ exam_answers vs exam_questions và lưu vào results
+ *  - Đánh dấu has_taken_exam để không được thi lại.
+ */
 void submit_test(int socket_fd, int user_id, int room_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -188,7 +206,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
   
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-      send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n", 33, 0);
+    server_send(socket_fd, "SUBMIT_TEST_FAIL|Database error\n");
       pthread_mutex_unlock(&server_data.lock);
       return;
   }
@@ -200,7 +218,7 @@ void submit_test(int socket_fd, int user_id, int room_id)
   sqlite3_finalize(stmt);
   
   if (start_time == 0) {
-      send(socket_fd, "SUBMIT_TEST_FAIL|Not started yet\n", 34, 0);
+    server_send(socket_fd, "SUBMIT_TEST_FAIL|Not started yet\n");
       pthread_mutex_unlock(&server_data.lock);
       return;
   }
@@ -227,11 +245,11 @@ void submit_test(int socket_fd, int user_id, int room_id)
       elapsed = max_time; // Cap ở max time
   }
   
-  // Tính điểm: JOIN user_answers với questions để check correct_answer
+  // Tính điểm: JOIN exam_answers với exam_questions để check correct_answer
   char score_query[512];
   snprintf(score_query, sizeof(score_query),
-           "SELECT COUNT(*) FROM user_answers ua "
-           "JOIN questions q ON ua.question_id = q.id "
+           "SELECT COUNT(*) FROM exam_answers ua "
+           "JOIN exam_questions q ON ua.question_id = q.id "
            "WHERE ua.user_id = %d AND ua.room_id = %d "
            "AND ua.selected_answer = q.correct_answer",
            user_id, room_id);
@@ -246,8 +264,8 @@ void submit_test(int socket_fd, int user_id, int room_id)
   
   // Đếm tổng số câu hỏi
   char count_query[256];
-  snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+    snprintf(count_query, sizeof(count_query),
+                     "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room_id);
   
   int total_questions = 0;
   if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
@@ -274,23 +292,32 @@ void submit_test(int socket_fd, int user_id, int room_id)
   // ===== CẬP NHẬT HAS_TAKEN_EXAM = 1 (LOGIC MỚI) =====
   char update_taken_query[256];
   snprintf(update_taken_query, sizeof(update_taken_query),
+           "UPDATE participants SET has_taken_exam = 1 "
+           "WHERE user_id = %d AND room_id = %d",
+           user_id, room_id);
+  sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
+
+  // Đồng bộ thêm với bảng room_participants (nếu tồn tại) để chặn JOIN_ROOM thi lại
+  snprintf(update_taken_query, sizeof(update_taken_query),
            "UPDATE room_participants SET has_taken_exam = 1 "
            "WHERE user_id = %d AND room_id = %d",
            user_id, room_id);
   sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
-  printf("[SUBMIT] Marked user %d as taken exam in room %d\n", user_id, room_id);
 
   char response[200];
   snprintf(response, sizeof(response), "SUBMIT_TEST_OK|%d|%d|%ld\n", 
            score, total_questions, elapsed/60);
-  send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
 
   log_activity(user_id, "SUBMIT_TEST", "Test submitted");
-  printf("[INFO] User %d submitted test - Score: %d/%d\n", user_id, score, total_questions);
   
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Trả về kết quả tổng quan của phòng thi từ mảng in-memory TestRoom:
+ *  - Liệt kê từng user, điểm đạt được và tổng số câu hỏi.
+ */
 void view_results(int socket_fd, int room_id)
 {
   pthread_mutex_lock(&server_data.lock);
@@ -308,16 +335,18 @@ void view_results(int socket_fd, int room_id)
   }
 
   strcat(response, "\n");
-  send(socket_fd, response, strlen(response), 0);
+    server_send(socket_fd, response);
   pthread_mutex_unlock(&server_data.lock);
 }
 
-// Auto-submit khi user disconnect (được gọi từ handle_client khi detect disconnect)
+/*
+ * Auto-submit khi user disconnect hoặc hết thời gian (dùng trong rooms/timer):
+ *  - Giả định lock đã được giữ bởi caller
+ *  - Nếu chưa submit thì tính điểm từ exam_answers và lưu vào results
+ *  - Đánh dấu has_taken_exam ở cả participants và room_participants.
+ */
 void auto_submit_on_disconnect(int user_id, int room_id)
 {
-  pthread_mutex_lock(&server_data.lock);
-  
-  printf("[INFO] Auto-submit for user %d in room %d (disconnect detected)\n", user_id, room_id);
   
   // Kiểm tra user đã bắt đầu thi chưa
   char check_query[256];
@@ -327,7 +356,6 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(db, check_query, -1, &stmt, NULL) != SQLITE_OK) {
-      pthread_mutex_unlock(&server_data.lock);
       return;
   }
   
@@ -338,7 +366,6 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   sqlite3_finalize(stmt);
   
   if (start_time == 0) {
-      pthread_mutex_unlock(&server_data.lock);
       return; // Chưa bắt đầu thi
   }
   
@@ -351,7 +378,6 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   if (sqlite3_prepare_v2(db, check_result, -1, &stmt, NULL) == SQLITE_OK) {
       if (sqlite3_step(stmt) == SQLITE_ROW) {
           sqlite3_finalize(stmt);
-          pthread_mutex_unlock(&server_data.lock);
           return; // Đã submit rồi
       }
       sqlite3_finalize(stmt);
@@ -365,8 +391,8 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   // Tính điểm
   char score_query[512];
   snprintf(score_query, sizeof(score_query),
-           "SELECT COUNT(*) FROM user_answers ua "
-           "JOIN questions q ON ua.question_id = q.id "
+           "SELECT COUNT(*) FROM exam_answers ua "
+           "JOIN exam_questions q ON ua.question_id = q.id "
            "WHERE ua.user_id = %d AND ua.room_id = %d "
            "AND ua.selected_answer = q.correct_answer",
            user_id, room_id);
@@ -381,8 +407,8 @@ void auto_submit_on_disconnect(int user_id, int room_id)
   
   // Đếm tổng câu hỏi
   char count_query[256];
-  snprintf(count_query, sizeof(count_query),
-           "SELECT COUNT(*) FROM questions WHERE room_id = %d", room_id);
+    snprintf(count_query, sizeof(count_query),
+                     "SELECT COUNT(*) FROM exam_questions WHERE room_id = %d AND is_selected = 1", room_id);
   
   int total_questions = 0;
   if (sqlite3_prepare_v2(db, count_query, -1, &stmt, NULL) == SQLITE_OK) {
@@ -417,15 +443,37 @@ void auto_submit_on_disconnect(int user_id, int room_id)
       printf("[AUTO_SUBMIT] User %d auto-submitted - Score: %d/%d\n", 
              user_id, score, total_questions);
   }
+
+    // Đánh dấu đã thi trong cả participants và room_participants để chặn JOIN_ROOM thi lại
+    char update_taken_query[256];
+    snprintf(update_taken_query, sizeof(update_taken_query),
+                     "UPDATE participants SET has_taken_exam = 1 "
+                     "WHERE user_id = %d AND room_id = %d",
+                     user_id, room_id);
+    sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
+
+    snprintf(update_taken_query, sizeof(update_taken_query),
+                     "UPDATE room_participants SET has_taken_exam = 1 "
+                     "WHERE user_id = %d AND room_id = %d",
+                     user_id, room_id);
+    sqlite3_exec(db, update_taken_query, NULL, NULL, NULL);
   
+<<<<<<< HEAD
   log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on timeout");
   
   pthread_mutex_unlock(&server_data.lock);
+=======
+    log_activity(user_id, "AUTO_SUBMIT", "Test auto-submitted on disconnect");
+>>>>>>> 4a33a224791759951890cbd929b10a252b027d31
 }
 
-// Public wrapper để flush answers (dùng cho external calls)
+/*
+ * Hàm public dùng cho module khác (ví dụ network) để ép flush toàn bộ
+ * đáp án của một user trong một phòng xuống DB exam_answers.
+ */
 void flush_user_answers(int user_id, int room_id) {
     pthread_mutex_lock(&server_data.lock);
+<<<<<<< HEAD
     
     printf("[FLUSH] flush_user_answers called: user=%d, room=%d\n", user_id, room_id);
     
@@ -435,6 +483,17 @@ void flush_user_answers(int user_id, int room_id) {
     
     // Không làm gì cả - đáp án đã được lưu vào DB realtime khi SAVE_ANSWER
     printf("[FLUSH] Answers already saved to DB in realtime - no action needed\n");
+=======
+    int room_idx = find_room_index(room_id);
+    if (room_idx != -1) {
+        TestRoom *room = &server_data.rooms[room_idx];
+        
+        int user_idx = find_participant_index(room, user_id);
+        if (user_idx != -1) {
+            flush_answers_to_db(user_id, room_id, room, user_idx);
+        }
+    }
+>>>>>>> 4a33a224791759951890cbd929b10a252b027d31
     
     pthread_mutex_unlock(&server_data.lock);
 }

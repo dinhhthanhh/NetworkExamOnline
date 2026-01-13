@@ -5,6 +5,11 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
+/*
+ * Lấy bảng xếp hạng theo tổng điểm của tất cả user (trừ admin):
+ *  - Gom SUM(score) và COUNT(tests) từ bảng results
+ *  - Trả về top N theo tham số limit.
+ */
 void get_leaderboard(int socket_fd, int limit)
 {
   char query[500];
@@ -13,6 +18,7 @@ void get_leaderboard(int socket_fd, int limit)
   snprintf(query, sizeof(query),
            "SELECT u.id, u.username, COALESCE(SUM(r.score), 0) as total_score, COUNT(r.id) as tests_completed "
            "FROM users u LEFT JOIN results r ON u.id = r.user_id "
+           "WHERE u.role != 'admin' "
            "GROUP BY u.id ORDER BY total_score DESC LIMIT %d;",
            limit);
 
@@ -26,7 +32,6 @@ void get_leaderboard(int socket_fd, int limit)
     int rank = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-      // int user_id = sqlite3_column_int(stmt, 0);  // Unused - commented out
       const char *username = (const char *)sqlite3_column_text(stmt, 1);
       int total_score = sqlite3_column_int(stmt, 2);
       int tests_completed = sqlite3_column_int(stmt, 3);
@@ -46,6 +51,10 @@ void get_leaderboard(int socket_fd, int limit)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Thống kê tổng quan kết quả thi của một user:
+ *  - Tổng số bài thi, điểm trung bình, điểm cao nhất, tổng điểm.
+ */
 void get_user_statistics(int socket_fd, int user_id)
 {
   char query[500];
@@ -80,16 +89,20 @@ void get_user_statistics(int socket_fd, int user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Thống kê theo category (hiện tại là All Categories):
+ *  - Số bài thi và số bài đạt (điểm >= 50%) của user.
+ */
 void get_category_stats(int socket_fd, int user_id)
 {
   char query[800];
   sqlite3_stmt *stmt;
 
   snprintf(query, sizeof(query),
-           "SELECT q.category, COUNT(DISTINCT r.id) as tests, "
-           "SUM(CASE WHEN r.score > 0 THEN 1 ELSE 0 END) as passed "
-           "FROM results r JOIN questions q ON r.room_id = q.id "
-           "WHERE r.user_id = %d GROUP BY q.category;",
+           "SELECT 'All Categories' as category, COUNT(DISTINCT r.id) as tests, "
+           "SUM(CASE WHEN CAST(r.score AS FLOAT)/r.total_questions >= 0.5 THEN 1 ELSE 0 END) as passed "
+           "FROM results r "
+           "WHERE r.user_id = %d;",
            user_id);
 
   pthread_mutex_lock(&server_data.lock);
@@ -118,16 +131,20 @@ void get_category_stats(int socket_fd, int user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Thống kê theo độ khó (hiện tại All Difficulties):
+ *  - Số bài thi và tỉ lệ điểm trung bình (pass_rate) của user.
+ */
 void get_difficulty_stats(int socket_fd, int user_id)
 {
   char query[800];
   sqlite3_stmt *stmt;
 
   snprintf(query, sizeof(query),
-           "SELECT q.difficulty, COUNT(DISTINCT r.id) as tests, "
+           "SELECT 'All Difficulties' as difficulty, COUNT(DISTINCT r.id) as tests, "
            "AVG(CAST(r.score AS FLOAT)/r.total_questions) as pass_rate "
-           "FROM results r JOIN questions q ON r.room_id = q.id "
-           "WHERE r.user_id = %d GROUP BY q.difficulty;",
+           "FROM results r "
+           "WHERE r.user_id = %d;",
            user_id);
 
   pthread_mutex_lock(&server_data.lock);
@@ -156,6 +173,10 @@ void get_difficulty_stats(int socket_fd, int user_id)
   pthread_mutex_unlock(&server_data.lock);
 }
 
+/*
+ * Lấy lịch sử tối đa 20 bài thi gần nhất của user:
+ *  - Kèm tên phòng, điểm, tổng số câu, thời gian làm và thời điểm hoàn thành.
+ */
 void get_user_test_history(int socket_fd, int user_id)
 {
   char query[800];

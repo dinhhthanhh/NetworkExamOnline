@@ -5,6 +5,7 @@
 
 void *handle_client(void *arg);
 void broadcast_to_room_participants(int room_id, const char *message);
+void broadcast_to_room_participants_except(int room_id, const char *message, int exclude_user_id);
 void broadcast_room_created(int room_id, const char *room_name, int duration);
 
 #endif

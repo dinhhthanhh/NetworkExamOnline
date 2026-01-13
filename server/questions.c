@@ -9,42 +9,6 @@
 extern ServerData server_data;
 extern sqlite3 *db;
 
-void handle_get_user_rooms(int client_socket, int user_id)
-{
-    char query[256];
-    snprintf(query, sizeof(query), 
-             "SELECT id, name FROM rooms WHERE host_id = %d AND is_active = 1", 
-             user_id);
-    
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) != SQLITE_OK) {
-        send(client_socket, "ERROR|Database error\n", 21, 0);
-        return;
-    }
-    
-    char response[4096] = "ROOMS_LIST";
-    int has_rooms = 0;
-    
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        has_rooms = 1;
-        int room_id = sqlite3_column_int(stmt, 0);
-        const char *room_name = (const char *)sqlite3_column_text(stmt, 1);
-        
-        char room_entry[256];
-        snprintf(room_entry, sizeof(room_entry), "|%d:%s", room_id, room_name);
-        strcat(response, room_entry);
-    }
-    
-    sqlite3_finalize(stmt);
-    
-    if (!has_rooms) {
-        send(client_socket, "NO_ROOMS\n", 9, 0);
-    } else {
-        strcat(response, "\n");
-        send(client_socket, response, strlen(response), 0);
-    }
-}
-
 void handle_add_question(int client_socket, char *data)
 {
     pthread_mutex_lock(&server_data.lock);
@@ -107,7 +71,7 @@ void handle_add_question(int client_socket, char *data)
     
     // Escape strings for SQL safety using sqlite3_mprintf
     char *query = sqlite3_mprintf(
-        "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+        "INSERT INTO exam_questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
         "VALUES (%d, %Q, %Q, %Q, %Q, %Q, %d, %Q, %Q)",
         room_id, question, opt1, opt2, opt3, opt4, correct_answer, difficulty, category);
     
@@ -198,7 +162,7 @@ int import_questions_from_csv(const char *filename, int room_id)
         sqlite3_snprintf(sizeof(escaped_cat), escaped_cat, "%q", category);
         
         char *query = sqlite3_mprintf(
-            "INSERT INTO questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
+            "INSERT INTO exam_questions (room_id, question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category) "
             "VALUES (%d, %Q, %Q, %Q, %Q, %Q, %d, '%s', '%s');",
             room_id, q_text, opt_a, opt_b, opt_c, opt_d, correct, escaped_diff, escaped_cat);
         
@@ -212,7 +176,6 @@ int import_questions_from_csv(const char *filename, int room_id)
     
     pthread_mutex_unlock(&server_data.lock);
     fclose(fp);
-    printf("[INFO] Imported %d questions from %s to room_id=%d\n", imported, filename, room_id);
     return imported;
 }
 
@@ -255,9 +218,6 @@ void handle_import_csv(int client_socket, char *data)
         return;
     }
     
-    printf("[INFO] Receiving CSV upload: %s (%ld bytes) for room_id=%d\n", 
-           filename, file_size, room_id);
-    
     // Send ACK to client to confirm ready to receive
     char ack[] = "READY\n";
     send(client_socket, ack, strlen(ack), 0);
@@ -277,12 +237,9 @@ void handle_import_csv(int client_socket, char *data)
         ssize_t n = recv(client_socket, file_buffer + total_received, 
                          file_size - total_received, 0);
         if (n > 0) {
-            total_received += n;
-            printf("[DEBUG] Received %ld bytes (total: %ld/%ld)\n", 
-                   n, total_received, file_size);
+                 total_received += n;
             retry_count = 0; // Reset retry on success
         } else if (n == 0) {
-            printf("[ERROR] Connection closed by client\n");
             free(file_buffer);
             send(client_socket, "ERROR|Connection closed\n", 25, 0);
             return;
@@ -292,7 +249,6 @@ void handle_import_csv(int client_socket, char *data)
                 // Timeout - retry
                 retry_count++;
                 if (retry_count > MAX_RETRIES) {
-                    printf("[ERROR] Timeout after %d retries\n", MAX_RETRIES);
                     free(file_buffer);
                     send(client_socket, "ERROR|Upload timeout\n", 22, 0);
                     return;
@@ -300,7 +256,6 @@ void handle_import_csv(int client_socket, char *data)
                 usleep(100000); // Sleep 100ms before retry
                 continue;
             } else {
-                printf("[ERROR] recv() failed: %s\n", strerror(errno));
                 free(file_buffer);
                 send(client_socket, "ERROR|File upload failed\n", 26, 0);
                 return;
@@ -308,8 +263,6 @@ void handle_import_csv(int client_socket, char *data)
         }
     }
     file_buffer[file_size] = '\0';
-    
-    printf("[INFO] Received %ld bytes successfully\n", total_received);
     
     // Create temp file with unique name
     char temp_path[256];
@@ -327,14 +280,11 @@ void handle_import_csv(int client_socket, char *data)
     fclose(fp);
     free(file_buffer);
     
-    printf("[INFO] Saved to temp file: %s\n", temp_path);
-    
     // Import from temp file
     int imported = import_questions_from_csv(temp_path, room_id);
     
     // Delete temp file
     unlink(temp_path);
-    printf("[INFO] Cleaned up temp file\n");
     
     if (imported < 0) {
         send(client_socket, "ERROR|Import failed\n", 21, 0);
@@ -342,6 +292,5 @@ void handle_import_csv(int client_socket, char *data)
         char response[128];
         snprintf(response, sizeof(response), "IMPORT_OK|%d\n", imported);
         send(client_socket, response, strlen(response), 0);
-        printf("[INFO] Import completed: %d questions\n", imported);
     }
 }

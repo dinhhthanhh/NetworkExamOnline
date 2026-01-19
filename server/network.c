@@ -262,7 +262,14 @@ void *handle_client(void *arg)
     else if (strcmp(cmd, "IMPORT_PRACTICE_CSV") == 0)
     {
       int practice_id = atoi(strtok(NULL, "|"));
-      char *filename = strtok(NULL, "\n");
+      char *filename = strtok(NULL, "");  // Get rest of buffer (newline already stripped)
+      if (filename != NULL) {
+        // Trim any trailing whitespace/newline
+        size_t len = strlen(filename);
+        while (len > 0 && (filename[len-1] == '\n' || filename[len-1] == '\r' || filename[len-1] == ' ')) {
+          filename[--len] = '\0';
+        }
+      }
       import_practice_csv(socket_fd, user_id, practice_id, filename);
     }
     else if (strcmp(cmd, "SUBMIT_PRACTICE_ANSWER") == 0)

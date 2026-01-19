@@ -1298,24 +1298,32 @@ void get_practice_questions(int socket_fd, int user_id, int practice_id) {
         }
     }
     
-    char response[BUFFER_SIZE * 2];
-    
     if (room == NULL) {
-        snprintf(response, sizeof(response), "GET_PRACTICE_QUESTIONS_FAIL|Room not found\n");
+        char response[] = "GET_PRACTICE_QUESTIONS_FAIL|Room not found\n";
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
     
     if (room->creator_id != user_id) {
-        snprintf(response, sizeof(response), "GET_PRACTICE_QUESTIONS_FAIL|Permission denied\n");
+        char response[] = "GET_PRACTICE_QUESTIONS_FAIL|Permission denied\n";
         send(socket_fd, response, strlen(response), 0);
         pthread_mutex_unlock(&server_data.lock);
         return;
     }
     
+    // Use dynamic allocation for large question lists
+    size_t buf_size = BUFFER_SIZE * 64;  // 512KB for 100+ questions
+    char *response = malloc(buf_size);
+    if (!response) {
+        char err[] = "GET_PRACTICE_QUESTIONS_FAIL|Memory allocation failed\n";
+        send(socket_fd, err, strlen(err), 0);
+        pthread_mutex_unlock(&server_data.lock);
+        return;
+    }
+    
     // Build response with question details from database
-    int offset = snprintf(response, sizeof(response), "PRACTICE_QUESTIONS_LIST|%d", practice_id);
+    int offset = snprintf(response, buf_size, "PRACTICE_QUESTIONS_LIST|%d", practice_id);
     
     // Query practice questions from database
     char query[512];
@@ -1340,7 +1348,7 @@ void get_practice_questions(int socket_fd, int user_id, int practice_id) {
             const char *difficulty = (const char *)sqlite3_column_text(stmt, 7);
             const char *category = (const char *)sqlite3_column_text(stmt, 8);
             
-            offset += snprintf(response + offset, sizeof(response) - offset,
+            offset += snprintf(response + offset, buf_size - offset,
                              "|%d:%s:%s:%s:%s:%s:%d:%s:%s",
                              q_id, q_text ? q_text : "",
                              opt_a ? opt_a : "", opt_b ? opt_b : "",
@@ -1353,6 +1361,7 @@ void get_practice_questions(int socket_fd, int user_id, int practice_id) {
     
     strcat(response, "\n");
     send(socket_fd, response, strlen(response), 0);
+    free(response);
     
     printf("[DEBUG] get_practice_questions: count=%d, room=%d, user=%d\n",
            question_count, practice_id, user_id);

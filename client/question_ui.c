@@ -1015,8 +1015,13 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
     snprintf(msg, sizeof(msg), "GET_PRACTICE_QUESTIONS|%d\n", practice_id);
     send_message(msg);
     
-    char buffer[BUFFER_SIZE * 4];
-    receive_message(buffer, sizeof(buffer));
+    // Use dynamic allocation for large question lists
+    char *buffer = malloc(BUFFER_SIZE * 64);  // 512KB for 100+ questions
+    if (!buffer) {
+        show_error_dialog("Memory allocation failed");
+        return;
+    }
+    receive_message(buffer, BUFFER_SIZE * 64);
 
     // Scrolled window for questions list
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
@@ -1116,6 +1121,8 @@ void show_practice_question_manager(GtkWidget *widget, gpointer data) {
     gtk_box_pack_start(GTK_BOX(vbox), back_box, FALSE, FALSE, 0);
 
     g_signal_connect(back_btn, "clicked", G_CALLBACK(show_manage_practice_rooms), NULL);
+    
+    free(buffer);  // Free dynamically allocated buffer
     show_view(vbox);
 }
 

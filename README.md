@@ -134,12 +134,17 @@ NetworkExamOnline/
 │   ├── main.c                          # Entry point, GTK init
 │   ├── net.c/.h                        # Socket communication
 │   ├── ui.c/.h                         # Main menu logic
+│   ├── ui_utils.c/.h                   # UI helper functions
 │   ├── auth_ui.c/.h                    # Login/Register screens
 │   ├── room_ui.c/.h                    # Room list & selection
 │   ├── exam_ui.c/.h                    # Exam taking interface
 │   ├── practice_ui.c/.h                # Practice mode UI
 │   ├── stats_ui.c/.h                   # Statistics display
 │   ├── admin_ui.c/.h                   # Admin panel
+│   ├── question_ui.c/.h                # Question management UI
+│   ├── password_ui.c/.h                # Change password dialog
+│   ├── broadcast.c/.h                  # Handle server broadcasts
+│   ├── exam_room_creator.c/.h          # Room creation wizard
 │   └── Makefile
 │
 ├── 📂 data/                            # Sample data files
@@ -147,6 +152,7 @@ NetworkExamOnline/
 │   ├── question_30.csv                 # 30 câu hỏi (bài tập)
 │   └── question_100.csv                # 100 câu hỏi (thi thật)
 │
+├── online_exam_system_report.md        # Báo cáo kỹ thuật chi tiết
 └── README.md
 ```
 
@@ -202,6 +208,15 @@ make clean && make
 # Kết nối tới localhost:8888
 # Logs được ghi vào file client.log
 ```
+
+### 🔑 Tài khoản demo
+
+| Username | Password | Role | Mô tả |
+|----------|----------|------|-------|
+| `admin` | `admin123` | Administrator | Tạo/quản lý phòng thi, import câu hỏi |
+| `admin2` | `admin123` | Administrator | Tài khoản admin backup |
+
+> 💡 **Tip**: Đăng ký tài khoản mới với role `user` để trải nghiệm tính năng thi thử!
 
 ---
 

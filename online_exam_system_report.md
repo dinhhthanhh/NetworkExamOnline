@@ -1,6 +1,12 @@
 # BÁO CÁO KỸ THUẬT HỆ THỐNG THI TRẮC NGHIỆM TRỰC TUYẾN
 ## Môn: Lập trình mạng
 
+**Trường:** Công nghệ Thông tin và Truyền thông - Đại học Bách khoa Hà Nội (HUST)  
+**Nhóm:** Team 8 - SoICT HUST  
+**Thành viên:**
+- Nguyễn Hoài Nam (MSSV: 20225653) - Server Core
+- Nguyễn Đình Thành (MSSV: 20225670) - Client Core
+
 ---
 
 ## 1️⃣ GIỚI THIỆU ĐỀ TÀI
@@ -489,6 +495,11 @@ COMMAND_FAIL|error_message\n
 | `JOIN_PRACTICE\|practice_id` | Tham gia luyện tập | C→S |
 | `SUBMIT_PRACTICE_ANSWER\|id\|q\|ans` | Nộp đáp án practice | C→S |
 | `FINISH_PRACTICE\|practice_id` | Kết thúc luyện tập | C→S |
+| `CLOSE_PRACTICE\|practice_id` | Đóng phòng luyện tập (admin) | C→S |
+| `OPEN_PRACTICE\|practice_id` | Mở lại phòng luyện tập | C→S |
+| `DELETE_PRACTICE\|practice_id` | Xóa phòng luyện tập | C→S |
+| `PRACTICE_PARTICIPANTS\|practice_id` | Lấy danh sách thành viên | C→S |
+| `IMPORT_PRACTICE_CSV\|practice_id\|filename` | Import câu hỏi từ CSV | C→S |
 
 #### Statistics Messages
 
@@ -1007,6 +1018,58 @@ CREATE TABLE practice_rooms (
     is_open INTEGER DEFAULT 1,
     created_at INTEGER
 );
+
+-- Practice room questions link
+CREATE TABLE practice_room_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    practice_id INTEGER,
+    question_id INTEGER,
+    FOREIGN KEY(practice_id) REFERENCES practice_rooms(id),
+    FOREIGN KEY(question_id) REFERENCES practice_questions(id)
+);
+
+-- Practice questions bank
+CREATE TABLE practice_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_text TEXT NOT NULL,
+    option_a TEXT, option_b TEXT, option_c TEXT, option_d TEXT,
+    correct_answer INTEGER,
+    difficulty TEXT DEFAULT 'Easy',
+    category TEXT DEFAULT 'General'
+);
+
+-- Practice sessions
+CREATE TABLE practice_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    practice_id INTEGER,
+    user_id INTEGER,
+    score INTEGER DEFAULT 0,
+    total_questions INTEGER DEFAULT 0,
+    start_time INTEGER,
+    end_time INTEGER,
+    is_active INTEGER DEFAULT 1
+);
+
+-- Practice answers
+CREATE TABLE practice_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER,
+    question_id INTEGER,
+    selected_answer INTEGER,
+    is_correct INTEGER,
+    answered_at INTEGER
+);
+
+-- Practice logs for analytics
+CREATE TABLE practice_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    practice_id INTEGER,
+    question_id INTEGER,
+    answer INTEGER,
+    is_correct INTEGER,
+    timestamp INTEGER
+);
 ```
 
 ### 10.2 Định dạng dữ liệu
@@ -1144,21 +1207,18 @@ stop
 | **Error Handling** | 1.0 | ✅ 0.8 | Timeout, reconnect, nhưng thiếu retry logic hoàn chỉnh |
 | **Security** | 0.5 | ✅ 0.5 | SHA-256 password hashing, session tokens |
 | **Concurrency Control** | 0.5 | ✅ 0.5 | Mutex cho tất cả shared data access |
-| **Documentation** | 0.5 | ⚠️ 0.3 | Comments trong code, nhưng thiếu README chi tiết |
-| **TỔNG** | **10.0** | **9.6** | Hoàn thành tốt yêu cầu môn học |
+| **Documentation** | 0.5 | ✅ 0.5 | Comments trong code, README.md chi tiết (284 dòng) |
+| **TỔNG** | **10.0** | **9.8** | Hoàn thành tốt yêu cầu môn học |
 
 ---
 
 ## 1️⃣3️⃣ PHÂN CÔNG CÔNG VIỆC
 
-> **Assumption**: Do không có thông tin về nhóm, giả định nhóm 2-3 thành viên
-
-| Thành viên | Công việc | Files chính |
-|------------|-----------|-------------|
-| **Member 1** (Backend Lead) | Server core, socket, threading, protocol | `quiz_server.c`, `network.c`, `auth.c`, `db.c` |
-| **Member 2** (Business Logic) | Rooms, practice, results, statistics | `rooms.c`, `practice.c`, `results.c`, `stats.c` |
-| **Member 3** (Frontend) | GTK GUI, client networking | `main.c`, `net.c`, `*_ui.c` files |
-| **Chung** | Testing, documentation, báo cáo | `Makefile`, data files, slides |
+| Thành viên | MSSV | Vai trò | Công việc chính | Files chính |
+|------------|------|---------|-----------------|-------------|
+| **Nguyễn Hoài Nam** | 20225653 | Server Core | Socket programming, threading, protocol design, database, business logic | `quiz_server.c`, `network.c`, `auth.c`, `db.c`, `rooms.c`, `practice.c`, `results.c`, `stats.c`, `timer.c` |
+| **Nguyễn Đình Thành** | 20225670 | Client Core | GTK GUI, client networking, UI/UX, broadcast handling | `main.c`, `net.c`, `ui.c`, `*_ui.c` files, `broadcast.c` |
+| **Chung** | - | Collaboration | Testing, documentation, báo cáo, demo | `Makefile`, data files, `README.md`, slides |
 
 ---
 
@@ -1223,7 +1283,8 @@ make
 | Port | 8888 | `server/include/common.h` |
 | Timeout | 5 seconds | `client/net.c` |
 
-### 
+### C. Tài khoản mặc định
+
 | Username | Password | Role |
 |----------|----------|------|
 | admin | admin123 | Administrator |
